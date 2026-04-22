@@ -1,0 +1,16 @@
+.env
+*.pyc
+__pycache__/
+db.sqlite3
+media/
+celerybeat-schedule
+celerybeat-schedule-shm
+celerybeat-schedule-wal
+*.log
+.DS_Store
+venv/
+env/
+node_modules/
+.vscode/
+.idea/
+scratch/
