@@ -3,7 +3,7 @@ from .models import Plan, UserSubscription, BillingEvent, PostUsage
 
 @admin.register(Plan)
 class PlanAdmin(admin.ModelAdmin):
-    list_display = ("name", "slug", "price", "posts_per_month", "is_active", "created_at")
+    list_display = ("name", "slug", "price", "posts_limit", "is_active", "created_at")
     list_filter = ("is_active", "created_at")
     search_fields = ("name", "slug")
     ordering = ("price",)

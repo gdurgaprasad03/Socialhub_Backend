@@ -16,12 +16,12 @@ class Plan(models.Model):
     slug = models.SlugField(unique=True)                  # free, starter, pro, agency
     interval = models.CharField(max_length=10, choices=Interval.choices, default=Interval.MONTHLY)
     price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    posts_per_month = models.IntegerField(
-        default=10,
-        help_text="Max posts per month. -1 = unlimited."
+    posts_limit = models.IntegerField(
+        default=30,
+        help_text="Total posts allowed in the period (e.g., 7-day trial or 1 month). -1 = unlimited."
     )
     posts_per_day = models.IntegerField(
-        default=-1,
+        default=3,
         help_text="Max posts per day. -1 = unlimited."
     )
     max_accounts = models.IntegerField(
@@ -47,7 +47,7 @@ class Plan(models.Model):
 
     @property
     def is_unlimited(self):
-        return self.posts_per_month == -1
+        return self.posts_limit == -1
 
 
 class UserSubscription(models.Model):

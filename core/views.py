@@ -17,7 +17,6 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
-
 from .models import OAuthState, Post, SocialAccount, PostingSchedule
 from .serializers import LoginSerializer, PostSerializer, RegisterSerializer, SocialAccountSerializer, PostingScheduleSerializer
 from .services.oauth import (
@@ -135,14 +134,13 @@ class CreatePost(APIView):
                 from billing.models import PostUsage
                 sub = get_or_create_subscription(request.user)
                 usage = PostUsage.get_or_create_for_user(request.user)
-                if sub.plan.posts_per_month != -1 and usage.posts_used >= sub.plan.posts_per_month:
+                if sub.plan.posts_limit != -1 and usage.posts_used >= sub.plan.posts_limit:
                     return Response(
                         {"error": "Monthly post limit reached. Please upgrade your plan."},
                         status=status.HTTP_403_FORBIDDEN
                     )
                 
                 # Check Expiration
-                from django.utils import timezone
                 now = timezone.now()
                 if sub.current_period_end < now:
                     return Response(
@@ -266,7 +264,7 @@ class CreatePost(APIView):
                 from billing.models import PostUsage
                 sub = get_or_create_subscription(request.user)
                 usage = PostUsage.get_or_create_for_user(request.user)
-                if sub.plan.posts_per_month != -1 and usage.posts_used >= sub.plan.posts_per_month:
+                if sub.plan.posts_limit != -1 and usage.posts_used >= sub.plan.posts_limit:
                     return Response(
                         {"error": "Monthly post limit reached. Please upgrade your plan."},
                         status=status.HTTP_403_FORBIDDEN

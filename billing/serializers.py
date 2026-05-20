@@ -10,7 +10,7 @@ class PlanSerializer(serializers.ModelSerializer):
         model = Plan
         fields = [
             "id", "name", "slug", "interval", "price",
-            "posts_per_month", "max_accounts", "is_active",
+            "posts_limit", "max_accounts", "is_active",
         ]
 
 

@@ -28,19 +28,23 @@ def get_or_create_subscription(user):
     """Get user subscription or auto-assign Free plan safely."""
     free_plan = Plan.objects.filter(slug="free", is_active=True).first()
     if not free_plan:
-        # Fallback in case seed_plans hasn't been run
-        raise ValueError("Free plan not configured. Please run: python manage.py seed_plans")
+        # Create a default Free plan if it doesn't exist
+        free_plan = Plan.objects.create(
+            name="Free Trial",
+            slug="free",
+            price=0,
+            posts_limit=21, # 3 per day * 7 days
+            posts_per_day=3,
+            max_accounts=2
+        )
 
-    # Set duration: 7 days for Free plan (trial), 30 days for others
-    duration_days = 7 if free_plan.slug == "free" else 30
-    
     subscription, created = UserSubscription.objects.get_or_create(
         user=user,
         defaults={
             "plan": free_plan,
-            "status": UserSubscription.Status.ACTIVE,
+            "status": UserSubscription.Status.TRIALING,
             "current_period_start": timezone.now(),
-            "current_period_end": timezone.now() + timezone.timedelta(days=duration_days),
+            "current_period_end": timezone.now() + timezone.timedelta(days=7),
         }
     )
     return subscription
@@ -71,7 +75,7 @@ class CurrentSubscriptionView(APIView):
             usage = PostUsage.get_or_create_for_user(request.user)
 
             plan = subscription.plan
-            posts_limit = plan.posts_per_month
+            posts_limit = plan.posts_limit
             posts_used = usage.posts_used
             posts_remaining = (
                 -1 if plan.is_unlimited
@@ -472,13 +476,13 @@ class UsageView(APIView):
 
             posts_remaining = (
                 -1 if plan.is_unlimited
-                else max(0, plan.posts_per_month - usage.posts_used)
+                else max(0, plan.posts_limit - usage.posts_used)
             )
 
             return Response({
                 "plan_name": plan.name,
                 "posts_used": usage.posts_used,
-                "posts_limit": plan.posts_per_month,
+                "posts_limit": plan.posts_limit,
                 "posts_remaining": posts_remaining,
                 "is_unlimited": plan.is_unlimited,
                 "period_start": usage.period_start,

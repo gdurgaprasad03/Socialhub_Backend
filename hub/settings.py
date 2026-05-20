@@ -6,6 +6,7 @@ from pathlib import Path
 import dj_database_url
 from dotenv import load_dotenv
 from corsheaders.defaults import default_headers
+from celery.schedules import crontab
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env", override=True)
 
@@ -28,6 +29,7 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt.token_blacklist",
     "core",
     "billing",
+    "django_extensions",
 ]
 
 MIDDLEWARE = [
@@ -75,7 +77,7 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = os.getenv("DJANGO_TIME_ZONE", "Asia/Calcutta")
+TIME_ZONE = os.getenv("DJANGO_TIME_ZONE", "Asia/Kolkata")
 USE_I18N = True
 USE_TZ = True
 
@@ -102,10 +104,10 @@ SIMPLE_JWT = {
     "BLACKLIST_AFTER_ROTATION": True,
 }
 
-CORS_ALLOW_ALL_ORIGINS = os.getenv(
-    "CORS_ALLOW_ALL_ORIGINS", "False").lower() == "true"
-CORS_ALLOW_CREDENTIALS = os.getenv(
-    "CORS_ALLOW_CREDENTIALS", "False").lower() == "true"
+CORS_ALLOW_ALL_ORIGINS = str(os.getenv(
+    "CORS_ALLOW_ALL_ORIGINS", "False")).strip().lower() == "true"
+CORS_ALLOW_CREDENTIALS = str(os.getenv(
+    "CORS_ALLOW_CREDENTIALS", "False")).strip().lower() == "true"
 
 CORS_ALLOWED_ORIGINS = [origin.strip() for origin in os.getenv(
     "CORS_ALLOWED_ORIGINS", "").split(",") if origin.strip()]
@@ -134,7 +136,7 @@ CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "120"))
 CELERY_TASK_SOFT_TIME_LIMIT = int(
     os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "90"))
 
-from celery.schedules import crontab
+
 CELERY_BEAT_SCHEDULE = {
     "reset-monthly-usage": {
         "task": "billing.tasks.reset_monthly_usage",

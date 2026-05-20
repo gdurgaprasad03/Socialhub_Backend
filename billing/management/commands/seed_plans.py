@@ -11,7 +11,7 @@ class Command(BaseCommand):
                 "slug": "free",
                 "interval": "monthly",
                 "price": 0,
-                "posts_per_month": 21, # 3 posts per day * 7 days
+                "posts_limit": 21, # 3 posts per day * 7 days
                 "posts_per_day": 3,
                 "max_accounts": 2,
                 "razorpay_plan_id": "",
@@ -21,9 +21,9 @@ class Command(BaseCommand):
                 "slug": "basic",
                 "interval": "monthly",
                 "price": 499,
-                "posts_per_month": 100,
+                "posts_limit": 100,
                 "posts_per_day": -1,
-                "max_accounts": 3,
+                "max_accounts": 5,
                 "razorpay_plan_id": "",
             },
             {
@@ -31,9 +31,9 @@ class Command(BaseCommand):
                 "slug": "pro",
                 "interval": "monthly",
                 "price": 1499,
-                "posts_per_month": 500,
+                "posts_limit": 500,
                 "posts_per_day": -1,
-                "max_accounts": 6,
+                "max_accounts": 15,
                 "razorpay_plan_id": "",
             },
             {
@@ -41,9 +41,9 @@ class Command(BaseCommand):
                 "slug": "agency",
                 "interval": "monthly",
                 "price": 3999,
-                "posts_per_month": -1,
+                "posts_limit": -1,
                 "posts_per_day": -1,
-                "max_accounts": 10,
+                "max_accounts": 50,
                 "razorpay_plan_id": "",
             },
         ]
