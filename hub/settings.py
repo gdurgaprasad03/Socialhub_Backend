@@ -1,4 +1,3 @@
-# Settings updated to pick up .env changes
 import os
 import cloudinary
 from datetime import timedelta
