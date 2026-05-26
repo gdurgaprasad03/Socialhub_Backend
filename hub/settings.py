@@ -121,7 +121,7 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^http://localhost:\d+$",
     r"^http://127\.0\.0\.1:\d+$",
-    r"^https://pseudopregnant-fatless-ila\.ngrok-free\.dev$",
+    r"^https://nxsocial\.nxsys\.in$",
 ]
 
 
