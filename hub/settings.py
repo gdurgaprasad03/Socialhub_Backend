@@ -32,8 +32,9 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    "corsheaders.middleware.CorsMiddleware",          
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -85,6 +86,15 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
@@ -114,9 +124,7 @@ CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in os.getenv(
     "CSRF_TRUSTED_ORIGINS", "").split(",") if origin.strip()]
 
 
-CORS_ALLOW_HEADERS = list(default_headers) + [
-    'ngrok-skip-browser-warning',
-]
+CORS_ALLOW_HEADERS = list(default_headers)
 
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^http://localhost:\d+$",
@@ -189,6 +197,23 @@ USE_X_FORWARDED_HOST = True
 USE_X_FORWARDED_PORT = True
 
 
+# Production HTTPS / security hardening.
+# Defaults are OFF so local dev (plain HTTP) keeps working.
+# Enable these in the server .env once HTTPS is set up behind Nginx.
+SECURE_SSL_REDIRECT = str(os.getenv(
+    "SECURE_SSL_REDIRECT", "False")).strip().lower() == "true"
+SESSION_COOKIE_SECURE = str(os.getenv(
+    "SESSION_COOKIE_SECURE", "False")).strip().lower() == "true"
+CSRF_COOKIE_SECURE = str(os.getenv(
+    "CSRF_COOKIE_SECURE", "False")).strip().lower() == "true"
+SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "0"))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = str(os.getenv(
+    "SECURE_HSTS_INCLUDE_SUBDOMAINS", "False")).strip().lower() == "true"
+SECURE_HSTS_PRELOAD = str(os.getenv(
+    "SECURE_HSTS_PRELOAD", "False")).strip().lower() == "true"
+SECURE_CONTENT_TYPE_NOSNIFF = True
+
+
 # Razorpay Configuration
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "")
@@ -202,4 +227,3 @@ cloudinary.config(
     secure=True,
 )
 
-SITE_URL = os.getenv("SITE_URL", "")
