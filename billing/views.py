@@ -154,6 +154,26 @@ class CreateSubscriptionView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # Plan change / upgrade handling.
+        # If the user already has an active paid plan, block a no-op and cancel
+        # the existing Razorpay subscription before creating the new one so the
+        # user is never billed for two subscriptions at once.
+        current = get_or_create_subscription(request.user)
+        if (
+            current.plan_id == plan.id
+            and current.status == UserSubscription.Status.ACTIVE
+        ):
+            return Response(
+                {"error": f"You are already subscribed to the {plan.name} plan."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        is_plan_change = bool(
+            current.razorpay_subscription_id and not current.plan.is_free
+        )
+        if is_plan_change:
+            self._cancel_existing_razorpay_subscription(current)
+
         try:
             client = get_razorpay_client()
 
@@ -170,12 +190,24 @@ class CreateSubscriptionView(APIView):
                 }
             })
 
+            if is_plan_change:
+                BillingEvent.objects.create(
+                    user=request.user,
+                    event_type=BillingEvent.EventType.PLAN_CHANGED,
+                    payload={
+                        "from_plan": current.plan.slug,
+                        "to_plan": plan_slug,
+                        "new_razorpay_subscription_id": rp_subscription["id"],
+                    },
+                )
+
             return Response({
                 "razorpay_subscription_id": rp_subscription["id"],
                 "razorpay_key_id": settings.RAZORPAY_KEY_ID,
                 "plan": PlanSerializer(plan).data,
                 "amount": int(plan.price * 100),  # in paise
                 "currency": "INR",
+                "is_plan_change": is_plan_change,
             })
 
         except Exception as exc:
@@ -183,6 +215,36 @@ class CreateSubscriptionView(APIView):
             return Response(
                 {"error": f"Payment setup failed: {str(exc)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def _cancel_existing_razorpay_subscription(self, subscription):
+        """
+        Cancel the user's current Razorpay subscription immediately so that
+        switching to another paid plan never results in double billing.
+        Failures are logged but not fatal — the user still gets the new plan.
+        """
+        if not subscription.razorpay_subscription_id:
+            return
+        old_id = subscription.razorpay_subscription_id
+        try:
+            client = get_razorpay_client()
+            client.subscription.cancel(
+                old_id,
+                {"cancel_at_cycle_end": 0},  # cancel now, not at period end
+            )
+            # Detach the old id immediately so the resulting
+            # `subscription.cancelled` webhook can't downgrade this user before
+            # the new subscription's `subscription.activated` webhook lands.
+            subscription.razorpay_subscription_id = ""
+            subscription.save(update_fields=["razorpay_subscription_id", "updated_at"])
+            logger.info(
+                "Cancelled old subscription %s for plan change (user=%s)",
+                old_id, subscription.user_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to cancel old Razorpay subscription %s during plan change: %s",
+                old_id, exc,
             )
 
     def _downgrade_to_free(self, user):
