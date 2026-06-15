@@ -92,6 +92,12 @@ MEDIA_ROOT = BASE_DIR / "media"
 STATIC_ROOT.mkdir(exist_ok=True)
 MEDIA_ROOT.mkdir(exist_ok=True)
 
+# Allow large media uploads (base64 images + mp4 videos in post payloads).
+# Default is 2.5 MB, which causes RequestDataTooBig -> connection reset on the
+# dev server before any HTTP response is returned (empty Network tab response).
+DATA_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100 MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100 MB
+
 STORAGES = {
     "default": {
         "BACKEND": "django.core.files.storage.FileSystemStorage",
