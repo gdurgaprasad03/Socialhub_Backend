@@ -538,15 +538,6 @@ class SocialConnectStartView(APIView):
             code_verifier = ""
             login_method = ""
 
-            # Instagram can be connected two ways:
-            #   • Facebook-based flow (default): IG account linked to a Facebook Page.
-            #   • Direct Instagram Login: user signs in with Instagram credentials only.
-            # Use the direct flow for Instagram when it's configured, unless the
-            # caller explicitly requests the Facebook flow with ?method=facebook.
-            # Use the direct Instagram Login flow for Instagram connections by
-            # default so the button opens the separate Instagram login experience.
-            # The older Meta/Facebook path is still available when the frontend
-            # explicitly requests it with ?method=facebook.
             use_instagram_login = (
                 platform == SocialAccount.Platform.INSTAGRAM
                 and request.query_params.get("method", "instagram") != "facebook"
@@ -725,8 +716,6 @@ class SocialConnectCallbackView(APIView):
             else:
                 raise ValueError("Unsupported platform.")
 
-            # The Instagram-Login branch builds account_data itself (different
-            # token/profile shape); every other flow uses the shared builder.
             if account_data is None:
                 account_data = build_social_account_data(platform, token_payload, profile_payload)
 
