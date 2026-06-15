@@ -919,7 +919,7 @@ class LoginView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        # TEMP DEBUG: log what the client sends (never the password) + why it fails.
+        
         try:
             keys = list(request.data.keys())
         except Exception:
