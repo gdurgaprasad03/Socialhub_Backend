@@ -177,10 +177,16 @@ def _collect_request_images(request):
         logger.info("CreatePost: received %d uploaded file(s)", len(uploaded_files))
         urls += _save_uploaded_files(uploaded_files)
 
-    string_media = (
-        request.POST.getlist("media_files")
-        if hasattr(request.POST, "getlist") else []
+    # The frontend also appends non-file image values (base64 data URIs / URLs)
+    # under "media_files" as plain form fields. Read them from request.data
+    # (DRF's already-parsed payload) rather than request.POST, which can raise
+    # on a multipart request whose stream DRF has already consumed. request.data
+    # merges form fields and files, so filter out the file objects we handled.
+    media_values = (
+        request.data.getlist("media_files")
+        if hasattr(request.data, "getlist") else []
     )
+    string_media = [m for m in media_values if isinstance(m, str)]
     if string_media:
         provided = True
         urls += _normalize_image_inputs(string_media)
