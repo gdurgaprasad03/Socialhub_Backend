@@ -12,8 +12,11 @@ load_dotenv(BASE_DIR / ".env", override=True)
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "change-me-in-production")
 DEBUG = os.getenv("DJANGO_DEBUG", "False").lower() == "true"
-ALLOWED_HOSTS = [host.strip() for host in os.getenv(
-    "DJANGO_ALLOWED_HOSTS", "*").split(",") if host.strip()]
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost,192.168.0.114,testserver,nxsocial.nxsys.in").split(",")
+    if host.strip()
+]
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -85,6 +88,9 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+
+STATIC_ROOT.mkdir(exist_ok=True)
+MEDIA_ROOT.mkdir(exist_ok=True)
 
 STORAGES = {
     "default": {
@@ -168,6 +174,13 @@ LINKEDIN_CLIENT_SECRET = os.getenv("LINKEDIN_CLIENT_SECRET", "")
 META_APP_ID = os.getenv("META_APP_ID", "")
 META_APP_SECRET = os.getenv("META_APP_SECRET", "")
 META_GRAPH_API_VERSION = os.getenv("META_GRAPH_API_VERSION", "v23.0")
+
+# Instagram API with Instagram Login (direct login, no Facebook Page required).
+# These are the "Instagram app" credentials found in the Meta App dashboard under
+# Instagram > API setup with Instagram login — distinct from META_APP_ID/SECRET above.
+INSTAGRAM_APP_ID = os.getenv("INSTAGRAM_APP_ID", "")
+INSTAGRAM_APP_SECRET = os.getenv("INSTAGRAM_APP_SECRET", "")
+INSTAGRAM_REDIRECT_URI = os.getenv("INSTAGRAM_REDIRECT_URI", "")
 
 
 TWITTER_CLIENT_ID = os.getenv("TWITTER_CLIENT_ID", "")

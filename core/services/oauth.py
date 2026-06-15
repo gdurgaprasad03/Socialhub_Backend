@@ -34,6 +34,16 @@ META_DEFAULT_SCOPES = [
     "publish_video",
 ]
 
+# Scopes for "Instagram API with Instagram Login" (direct login, no FB Page).
+INSTAGRAM_LOGIN_SCOPES = [
+    "instagram_business_basic",
+    "instagram_business_content_publish",
+]
+
+INSTAGRAM_LOGIN_AUTH_URL = "https://www.instagram.com/oauth/authorize"
+INSTAGRAM_LOGIN_TOKEN_URL = "https://api.instagram.com/oauth/access_token"
+INSTAGRAM_GRAPH_BASE = "https://graph.instagram.com"
+
 TWITTER_DEFAULT_SCOPES = [
     "tweet.read",
     "tweet.write",
@@ -234,6 +244,125 @@ def fetch_meta_accounts(access_token):
     payload = _json_or_raise(response)
     _raise_for_error(response)
     return payload.get("data", [])
+
+
+# ── Instagram (direct Instagram Login, no Facebook Page) ──────────────────
+
+def build_instagram_login_auth_url(redirect_uri, state):
+    """Build the authorization URL for 'Instagram API with Instagram Login'.
+
+    The user signs in with their Instagram professional account directly —
+    no Facebook account or linked Facebook Page is involved.
+    """
+    redirect_uri = redirect_uri or settings.INSTAGRAM_REDIRECT_URI
+    if not settings.INSTAGRAM_APP_ID:
+        raise OAuthConfigurationError("INSTAGRAM_APP_ID is not configured")
+
+    query = urlencode(
+        {
+            "client_id": settings.INSTAGRAM_APP_ID,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": ",".join(INSTAGRAM_LOGIN_SCOPES),
+            "state": state,
+        }
+    )
+    return f"{INSTAGRAM_LOGIN_AUTH_URL}?{query}"
+
+
+def exchange_instagram_login_code(code, redirect_uri=None):
+    """Exchange the auth code for a long-lived Instagram user access token.
+
+    Step 1: code -> short-lived token (+ user_id) via api.instagram.com.
+    Step 2: short-lived -> long-lived (60 day) token via graph.instagram.com.
+    """
+    redirect_uri = redirect_uri or settings.INSTAGRAM_REDIRECT_URI
+    if not settings.INSTAGRAM_APP_ID or not settings.INSTAGRAM_APP_SECRET:
+        raise OAuthConfigurationError("Instagram Login credentials are not fully configured")
+
+    short_lived_response = requests.post(
+        INSTAGRAM_LOGIN_TOKEN_URL,
+        data={
+            "client_id": settings.INSTAGRAM_APP_ID,
+            "client_secret": settings.INSTAGRAM_APP_SECRET,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri,
+            "code": code,
+        },
+        headers={"Accept": "application/json"},
+        timeout=settings.SOCIAL_REQUEST_TIMEOUT,
+    )
+    short_lived_payload = _json_or_raise(short_lived_response)
+    _raise_for_error(short_lived_response)
+
+    # Older responses nest the token inside a "data" list; newer ones are flat.
+    if isinstance(short_lived_payload.get("data"), list) and short_lived_payload["data"]:
+        short_lived_payload = short_lived_payload["data"][0]
+
+    short_lived_token = short_lived_payload.get("access_token")
+    user_id = short_lived_payload.get("user_id")
+    if not short_lived_token:
+        raise SocialPlatformError("Instagram token response did not include an access token.")
+
+    long_lived_response = requests.get(
+        f"{INSTAGRAM_GRAPH_BASE}/access_token",
+        params={
+            "grant_type": "ig_exchange_token",
+            "client_secret": settings.INSTAGRAM_APP_SECRET,
+            "access_token": short_lived_token,
+        },
+        headers={"Accept": "application/json"},
+        timeout=settings.SOCIAL_REQUEST_TIMEOUT,
+    )
+    long_lived_payload = _json_or_raise(long_lived_response)
+    _raise_for_error(long_lived_response)
+
+    access_token = long_lived_payload.get("access_token")
+    if not access_token:
+        raise SocialPlatformError("Instagram long-lived token response did not include an access token.")
+
+    return {
+        "access_token": access_token,
+        "token_type": long_lived_payload.get("token_type", "Bearer"),
+        "expires_in": long_lived_payload.get("expires_in"),
+        "user_id": user_id,
+    }
+
+
+def fetch_instagram_login_profile(access_token):
+    """Fetch the Instagram professional account profile (Instagram Login)."""
+    response = requests.get(
+        f"{INSTAGRAM_GRAPH_BASE}/{settings.META_GRAPH_API_VERSION}/me",
+        params={
+            "fields": "user_id,username,account_type,name",
+            "access_token": access_token,
+        },
+        headers={"Accept": "application/json"},
+        timeout=settings.SOCIAL_REQUEST_TIMEOUT,
+    )
+    payload = _json_or_raise(response)
+    _raise_for_error(response)
+    if not (payload.get("user_id") or payload.get("id")):
+        raise SocialPlatformError("Instagram profile response did not include the user id.")
+    return payload
+
+
+def refresh_instagram_login_token(access_token):
+    """Refresh a long-lived Instagram Login token (valid 60 days, refreshable)."""
+    response = requests.get(
+        f"{INSTAGRAM_GRAPH_BASE}/refresh_access_token",
+        params={
+            "grant_type": "ig_refresh_token",
+            "access_token": access_token,
+        },
+        headers={"Accept": "application/json"},
+        timeout=settings.SOCIAL_REQUEST_TIMEOUT,
+    )
+    payload = _json_or_raise(response)
+    _raise_for_error(response)
+    if "access_token" not in payload:
+        raise SocialPlatformError("Instagram refresh response did not include an access token.")
+    return payload
 
 
 # ── Twitter OAuth 2.0 PKCE ────────────────────────────────────────────────
@@ -534,6 +663,42 @@ def build_social_account_data(platform, token_payload, profile_payload):
         }
 
     raise SocialPlatformError(f"Unsupported OAuth platform: {platform}")
+
+
+def build_instagram_login_account_data(token_payload, profile_payload):
+    """Build SocialAccount data for an Instagram-Login (direct) connection.
+
+    Stored under the same 'instagram' platform as the Facebook-based flow, but
+    tagged with metadata.login_type='instagram' so the publishing service knows
+    to talk to graph.instagram.com with the IG user token (instead of
+    graph.facebook.com with a Page token).
+    """
+    account_id = (
+        profile_payload.get("user_id")
+        or profile_payload.get("id")
+        or token_payload.get("user_id")
+    )
+    if not account_id:
+        raise SocialPlatformError("Instagram account data is incomplete.")
+
+    expires_at = None
+    expires_in = token_payload.get("expires_in")
+    if expires_in:
+        expires_at = timezone.now() + timedelta(seconds=int(expires_in))
+
+    return {
+        "account_id": str(account_id),
+        "platform_username": profile_payload.get("username", ""),
+        "access_token": token_payload["access_token"],
+        "refresh_token": "",
+        "token_type": token_payload.get("token_type", "Bearer"),
+        "expires_at": expires_at,
+        "metadata": {
+            "login_type": "instagram",
+            "account_type": profile_payload.get("account_type"),
+            "name": profile_payload.get("name"),
+        },
+    }
 
 
 def _json_or_raise(response):

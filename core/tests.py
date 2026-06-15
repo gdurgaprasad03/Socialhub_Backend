@@ -1,12 +1,15 @@
 from datetime import timedelta
 
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
-from rest_framework.test import APIRequestFactory
+from rest_framework.test import APIClient, APIRequestFactory
 
-from .models import Post, SocialAccount
+from .models import OAuthState, Post, SocialAccount
 from .serializers import PostSerializer, SocialAccountSerializer
+from .views import SocialConnectStartView
 
 User = get_user_model()
 
@@ -142,6 +145,30 @@ class SocialAccountSerializerTests(TestCase):
         )
         self.assertFalse(serializer.is_valid())
         self.assertIn("non_field_errors", serializer.errors)
+
+
+class SocialConnectStartViewTests(TestCase):
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.user = User.objects.create_user(
+            username="oauth-user",
+            email="oauth@example.com",
+            password="strongpass123",
+        )
+
+    def test_instagram_connect_note_mentions_meta_facebook_login(self):
+        client = APIClient()
+        client.force_authenticate(user=self.user)
+
+        with patch("core.views.generate_state", return_value="state-123"), \
+             patch("core.views.oauth_expiry", return_value=timezone.now() + timedelta(minutes=10)), \
+             patch("core.views.build_meta_auth_url", return_value="https://facebook.example/oauth"):
+            response = client.get("/api/social-connect/instagram/start/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Meta/Facebook", response.json()["note"])
+        self.assertIn("Instagram", response.json()["note"])
+        self.assertTrue(OAuthState.objects.filter(user=self.user, platform="instagram").exists())
 
 
 class PostModelTests(TestCase):

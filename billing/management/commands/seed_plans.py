@@ -24,7 +24,7 @@ class Command(BaseCommand):
                 "posts_limit": 100,
                 "posts_per_day": -1,
                 "max_accounts": 5,
-                "razorpay_plan_id": "",
+                "razorpay_plan_id": "plan_Sp98xpaI313Znq",
             },
             {
                 "name": "Pro",
@@ -34,7 +34,7 @@ class Command(BaseCommand):
                 "posts_limit": 500,
                 "posts_per_day": -1,
                 "max_accounts": 15,
-                "razorpay_plan_id": "",
+                "razorpay_plan_id": "plan_Sp99S1rdOrSlOV",
             },
             {
                 "name": "Agency",
@@ -44,7 +44,7 @@ class Command(BaseCommand):
                 "posts_limit": -1,
                 "posts_per_day": -1,
                 "max_accounts": 50,
-                "razorpay_plan_id": "",
+                "razorpay_plan_id": "plan_Sp99knNzcuQLzV",
             },
         ]
 

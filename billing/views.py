@@ -279,6 +279,101 @@ class CreateSubscriptionView(APIView):
             )
 
 
+class VerifySubscriptionView(APIView):
+    """
+    POST /api/subscribe/verify/
+    Called by the frontend in Razorpay checkout's success handler, right after
+    payment. Verifies the payment signature and activates the plan immediately
+    so the user doesn't have to wait for the (async, sometimes-delayed) webhook.
+    Body: {
+        "razorpay_payment_id": "...",
+        "razorpay_subscription_id": "...",
+        "razorpay_signature": "..."
+    }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        payment_id = request.data.get("razorpay_payment_id", "").strip()
+        subscription_id = request.data.get("razorpay_subscription_id", "").strip()
+        signature = request.data.get("razorpay_signature", "").strip()
+
+        if not (payment_id and subscription_id and signature):
+            return Response(
+                {"error": "razorpay_payment_id, razorpay_subscription_id and "
+                          "razorpay_signature are all required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        client = get_razorpay_client()
+
+        # 1. Verify the payment actually came from Razorpay (anti-tamper).
+        try:
+            client.utility.verify_subscription_payment_signature({
+                "razorpay_payment_id": payment_id,
+                "razorpay_subscription_id": subscription_id,
+                "razorpay_signature": signature,
+            })
+        except Exception:
+            logger.warning("Invalid subscription payment signature for sub %s", subscription_id)
+            return Response(
+                {"error": "Payment verification failed. Signature mismatch."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 2. Resolve which plan was actually paid for (trust Razorpay, not the
+        #    client) by reading the plan_id off the subscription.
+        try:
+            rp_sub = client.subscription.fetch(subscription_id)
+            rp_plan_id = rp_sub.get("plan_id", "")
+        except Exception as exc:
+            logger.exception("Could not fetch Razorpay subscription %s", subscription_id)
+            return Response(
+                {"error": f"Could not verify subscription: {exc}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        plan = Plan.objects.filter(razorpay_plan_id=rp_plan_id, is_active=True).first()
+        if not plan:
+            logger.error("No local plan matches Razorpay plan_id %s", rp_plan_id)
+            return Response(
+                {"error": "Paid plan is not recognised on the server."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 3. Activate immediately.
+        now = timezone.now()
+        subscription, _ = UserSubscription.objects.update_or_create(
+            user=request.user,
+            defaults={
+                "plan": plan,
+                "status": UserSubscription.Status.ACTIVE,
+                "razorpay_subscription_id": subscription_id,
+                "current_period_start": now,
+                "current_period_end": now + timezone.timedelta(days=30),
+                "cancelled_at": None,
+            },
+        )
+
+        BillingEvent.objects.create(
+            user=request.user,
+            event_type=BillingEvent.EventType.PAYMENT_SUCCESS,
+            payload={
+                "plan": plan.slug,
+                "razorpay_payment_id": payment_id,
+                "razorpay_subscription_id": subscription_id,
+                "source": "verify",
+            },
+        )
+        logger.info("Subscription activated via verify: user=%s plan=%s",
+                    request.user.id, plan.slug)
+
+        return Response({
+            "message": f"You are now on the {plan.name} plan.",
+            "subscription": UserSubscriptionSerializer(subscription).data,
+        })
+
+
 class CancelSubscriptionView(APIView):
     """
     POST /api/billing/cancel/

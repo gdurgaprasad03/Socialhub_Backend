@@ -72,6 +72,10 @@ class OAuthState(models.Model):
     callback_uri = models.URLField(
         max_length=500, blank=True, help_text="Exact callback URI sent to provider")
     code_verifier = models.CharField(max_length=255, blank=True)
+    login_method = models.CharField(
+        max_length=20, blank=True,
+        help_text="Connection variant for a platform, e.g. 'instagram' for direct "
+                  "Instagram Login vs the default Facebook-based flow")
     redirect_url = models.URLField(
         blank=True, help_text="Frontend URL to redirect to after success/error")
     expires_at = models.DateTimeField()

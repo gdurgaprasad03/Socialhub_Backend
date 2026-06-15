@@ -26,9 +26,38 @@ class InstagramService(BaseSocialService):
 
     def __init__(self, user, account=None):
         super().__init__(user, account=account)
-        self.base_url = f"https://graph.facebook.com/{GRAPH_VERSION}"
+        # Accounts connected via direct "Instagram Login" use the Instagram Graph
+        # host with an IG user token; Facebook-Page-linked accounts use the
+        # Facebook Graph host with a Page token. Same endpoints/params otherwise.
+        if (self.account.metadata or {}).get("login_type") == "instagram":
+            self.base_url = f"https://graph.instagram.com/{GRAPH_VERSION}"
+        else:
+            self.base_url = f"https://graph.facebook.com/{GRAPH_VERSION}"
         self.ig_user_id = self.account.account_id
         self.token = self.account.access_token
+
+    # ── Token refresh ─────────────────────────────────────────────────────
+
+    def refresh_access_token(self):
+        """Refresh a direct Instagram-Login token (long-lived, 60-day, refreshable).
+
+        Facebook-Page-linked accounts use non-expiring Page tokens, so there is
+        nothing to refresh for them — fall back to the base behaviour.
+        """
+        from django.utils import timezone
+        from datetime import timedelta
+        from .oauth import refresh_instagram_login_token
+
+        if (self.account.metadata or {}).get("login_type") != "instagram":
+            return super().refresh_access_token()
+
+        payload = refresh_instagram_login_token(self.account.access_token)
+        self.account.access_token = payload["access_token"]
+        self.token = payload["access_token"]
+        expires_in = payload.get("expires_in")
+        if expires_in:
+            self.account.expires_at = timezone.now() + timedelta(seconds=int(expires_in))
+        self.account.save(update_fields=["access_token", "expires_at", "updated_at"])
 
     # ── Helpers ───────────────────────────────────────────────────────────
 

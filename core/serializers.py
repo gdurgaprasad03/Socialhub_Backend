@@ -42,13 +42,17 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 
 class LoginSerializer(serializers.Serializer):
-    email = serializers.EmailField(required=False)
-    username = serializers.CharField(required=False)
+    # All login fields are plain CharFields (not EmailField) so a username typed
+    # into the "email" box isn't rejected by email-format validation. The login
+    # value can arrive in any of `identifier`, `email`, or `username`.
+    identifier = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    email = serializers.CharField(required=False, allow_blank=True)
+    username = serializers.CharField(required=False, allow_blank=True)
     password = serializers.CharField(write_only=True)
 
     def validate(self, data):
         username_or_email = (
-            data.get("email") or data.get("username") or ""
+            data.get("identifier") or data.get("email") or data.get("username") or ""
         ).strip()
         password = data.get("password")
 
@@ -57,13 +61,19 @@ class LoginSerializer(serializers.Serializer):
                 "Email or username and password are required"
             )
 
-        user = None
+        # Resolve the account by email or username (both case-insensitive),
+        # then authenticate using its real username.
         if "@" in username_or_email:
             user_obj = User.objects.filter(email__iexact=username_or_email).first()
-            if user_obj:
-                user = authenticate(username=user_obj.username, password=password)
         else:
-            user = authenticate(username=username_or_email, password=password)
+            user_obj = (
+                User.objects.filter(username__iexact=username_or_email).first()
+                or User.objects.filter(email__iexact=username_or_email).first()
+            )
+
+        user = None
+        if user_obj:
+            user = authenticate(username=user_obj.username, password=password)
 
         if not user:
             raise serializers.ValidationError("Invalid credentials")

@@ -24,17 +24,21 @@ from .services.oauth import (
     SocialPlatformError,
     build_linkedin_auth_url,
     build_meta_auth_url,
+    build_instagram_login_auth_url,
     build_twitter_auth_url,
     build_twitter_oauth1_auth_url,
     build_youtube_auth_url,
     build_social_account_data,
+    build_instagram_login_account_data,
     exchange_linkedin_code,
     exchange_meta_code,
+    exchange_instagram_login_code,
     exchange_twitter_code,
     exchange_twitter_oauth1_code,
     exchange_youtube_code,
     fetch_linkedin_profile,
     fetch_meta_accounts,
+    fetch_instagram_login_profile,
     fetch_twitter_profile,
     fetch_twitter_request_token,
     fetch_youtube_profile,
@@ -532,9 +536,29 @@ class SocialConnectStartView(APIView):
             redirect_url = request.query_params.get("next", "").strip()
             expires_at = oauth_expiry()
             code_verifier = ""
+            login_method = ""
+
+            # Instagram can be connected two ways:
+            #   • Facebook-based flow (default): IG account linked to a Facebook Page.
+            #   • Direct Instagram Login: user signs in with Instagram credentials only.
+            # Use the direct flow for Instagram when it's configured, unless the
+            # caller explicitly requests the Facebook flow with ?method=facebook.
+            # Use the direct Instagram Login flow for Instagram connections by
+            # default so the button opens the separate Instagram login experience.
+            # The older Meta/Facebook path is still available when the frontend
+            # explicitly requests it with ?method=facebook.
+            use_instagram_login = (
+                platform == SocialAccount.Platform.INSTAGRAM
+                and request.query_params.get("method", "instagram") != "facebook"
+                and bool(getattr(settings, "INSTAGRAM_APP_ID", ""))
+            )
 
             if platform == SocialAccount.Platform.LINKEDIN:
                 callback_url = settings.LINKEDIN_REDIRECT_URI
+            elif use_instagram_login:
+                callback_url = getattr(settings, "INSTAGRAM_REDIRECT_URI", "") or request.build_absolute_uri(
+                    reverse("social-connect-callback", kwargs={"platform": platform})
+                )
             elif platform == SocialAccount.Platform.TWITTER:
                 callback_url = getattr(settings, "TWITTER_REDIRECT_URI", "") or request.build_absolute_uri(
                     reverse("social-connect-callback", kwargs={"platform": platform})
@@ -551,6 +575,13 @@ class SocialConnectStartView(APIView):
             if platform == SocialAccount.Platform.LINKEDIN:
                 auth_url = build_linkedin_auth_url(callback_url, state_value)
                 note = "Connect your LinkedIn personal profile."
+            elif use_instagram_login:
+                auth_url = build_instagram_login_auth_url(callback_url, state_value)
+                login_method = "instagram"
+                note = (
+                    "Sign in with your Instagram professional (Business or Creator) "
+                    "account — no Facebook account or Page required."
+                )
             elif platform == SocialAccount.Platform.TWITTER:
                 tokens = fetch_twitter_request_token(callback_url)
                 auth_url = build_twitter_oauth1_auth_url(tokens["oauth_token"])
@@ -562,7 +593,10 @@ class SocialConnectStartView(APIView):
                 note = "Connect your YouTube channel to upload videos."
             else:
                 auth_url = build_meta_auth_url(callback_url, state_value)
-                note = "Meta login connects Facebook Pages or Instagram professional accounts."
+                note = (
+                    "Instagram uses Meta/Facebook login. "
+                    "After sign-in, choose your Facebook Page or Instagram professional account."
+                )
 
             OAuthState.objects.create(
                 user=request.user,
@@ -570,6 +604,7 @@ class SocialConnectStartView(APIView):
                 state=state_value,
                 callback_uri=callback_url,
                 code_verifier=code_verifier,
+                login_method=login_method,
                 redirect_url=redirect_url,
                 expires_at=expires_at,
             )
@@ -639,9 +674,17 @@ class SocialConnectCallbackView(APIView):
         callback_uri = oauth_state.callback_uri
         success_redirect_url = oauth_state.redirect_url
         code_verifier = oauth_state.code_verifier
+        login_method = oauth_state.login_method
+        account_data = None
 
         try:
-            if platform == SocialAccount.Platform.LINKEDIN:
+            if platform == SocialAccount.Platform.INSTAGRAM and login_method == "instagram":
+                # Direct Instagram Login — no Facebook Page involved.
+                token_payload = exchange_instagram_login_code(code, callback_uri)
+                profile_payload = fetch_instagram_login_profile(token_payload["access_token"])
+                account_data = build_instagram_login_account_data(token_payload, profile_payload)
+
+            elif platform == SocialAccount.Platform.LINKEDIN:
                 token_payload = exchange_linkedin_code(code, callback_uri)
                 profile_payload = fetch_linkedin_profile(token_payload["access_token"])
 
@@ -682,7 +725,10 @@ class SocialConnectCallbackView(APIView):
             else:
                 raise ValueError("Unsupported platform.")
 
-            account_data = build_social_account_data(platform, token_payload, profile_payload)
+            # The Instagram-Login branch builds account_data itself (different
+            # token/profile shape); every other flow uses the shared builder.
+            if account_data is None:
+                account_data = build_social_account_data(platform, token_payload, profile_payload)
 
             # Set account_label from the profile
             account_label = (
@@ -777,8 +823,23 @@ class LoginView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
+        # TEMP DEBUG: log what the client sends (never the password) + why it fails.
+        try:
+            keys = list(request.data.keys())
+        except Exception:
+            keys = "unparseable-body"
+        logger.warning(
+            "LOGIN DEBUG: keys=%s email=%r username=%r identifier=%r has_password=%s",
+            keys,
+            request.data.get("email"),
+            request.data.get("username"),
+            request.data.get("identifier"),
+            bool(request.data.get("password")),
+        )
         serializer = LoginSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            logger.warning("LOGIN DEBUG: rejected -> %s", serializer.errors)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.validated_data, status=status.HTTP_200_OK)
 
 
