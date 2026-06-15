@@ -1,10 +1,13 @@
+import base64
 import json
 import logging
 import os
+import uuid
 from urllib.parse import urlencode
 from datetime import datetime, timedelta
 from celery import current_app
 from django.conf import settings
+from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.db import OperationalError
 from django.db.models import Count
@@ -104,6 +107,102 @@ def _save_uploaded_files(files):
     return saved_urls
 
 
+# Map common image/video mime types to file extensions for base64 uploads.
+_MIME_EXT = {
+    "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png",
+    "image/gif": "gif", "image/webp": "webp", "image/bmp": "bmp",
+    "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm",
+}
+
+
+def _save_base64_media(data_uri):
+    """Decode a `data:<mime>;base64,<payload>` URI, store it under MEDIA, and
+    return its /media URL. Returns None if the value isn't a decodable data URI."""
+    if not isinstance(data_uri, str) or not data_uri.startswith("data:"):
+        return None
+    try:
+        header, _, payload = data_uri.partition(",")
+        if "base64" not in header or not payload:
+            return None
+        mime = header[len("data:"):].split(";")[0].strip().lower()
+        ext = _MIME_EXT.get(mime, mime.split("/")[-1] or "bin")
+        raw = base64.b64decode(payload)
+    except Exception:
+        logger.warning("Skipping undecodable base64 media value")
+        return None
+    file_path = default_storage.save(
+        f"post_media/{uuid.uuid4().hex}.{ext}", ContentFile(raw)
+    )
+    return settings.MEDIA_URL + file_path
+
+
+def _normalize_image_inputs(values):
+    """Turn a mixed list of image inputs into a list of stored/usable URLs.
+
+    Each value may be a base64 data URI (decoded + stored), an http(s)/`/media`
+    URL (kept as-is), or junk (skipped). `blob:` URLs only exist in the browser
+    and cannot be resolved server-side, so they're dropped with a warning."""
+    urls = []
+    for value in values:
+        if not isinstance(value, str) or not value.strip():
+            continue
+        value = value.strip()
+        if value.startswith("data:"):
+            saved = _save_base64_media(value)
+            if saved:
+                urls.append(saved)
+        elif value.startswith(("http://", "https://", "/media/")):
+            urls.append(value)
+        elif value.startswith("blob:"):
+            logger.warning("Dropping blob: URL — not resolvable server-side")
+        # anything else is ignored
+    return urls
+
+
+def _collect_request_images(request):
+    """Gather every image the client sent into a clean list of stored URLs.
+
+    Looks in three places the frontend uses: real file uploads (request.FILES),
+    string values appended under "media_files" (base64/URLs as form fields), and
+    the JSON "images" field. Base64 data URIs are decoded and stored; URLs pass
+    through. Returns (urls, media_provided) — media_provided is False only when
+    the request carried no image input at all, so a partial PUT can leave the
+    existing images untouched instead of clearing them."""
+    urls = []
+    provided = False
+
+    uploaded_files = request.FILES.getlist("media_files")
+    if uploaded_files:
+        provided = True
+        logger.info("CreatePost: received %d uploaded file(s)", len(uploaded_files))
+        urls += _save_uploaded_files(uploaded_files)
+
+    string_media = (
+        request.POST.getlist("media_files")
+        if hasattr(request.POST, "getlist") else []
+    )
+    if string_media:
+        provided = True
+        urls += _normalize_image_inputs(string_media)
+
+    raw_images = request.data.get("images", None)
+    if raw_images not in (None, ""):
+        provided = True
+        existing = []
+        if isinstance(raw_images, list):
+            existing = raw_images
+        elif isinstance(raw_images, str) and raw_images.strip():
+            try:
+                parsed = json.loads(raw_images)
+                if isinstance(parsed, list):
+                    existing = parsed
+            except (ValueError, TypeError):
+                existing = []
+        urls += _normalize_image_inputs(existing)
+
+    return urls, provided
+
+
 # ──────────────────────────────────────────────
 # POSTS
 # ──────────────────────────────────────────────
@@ -135,7 +234,7 @@ class CreatePost(APIView):
             is_draft = request.data.get("is_draft", False)
             if not is_draft:
                 from billing.views import get_or_create_subscription
-                from billing.models import PostUsage
+                from billing.models import PostUsage, UserSubscription
                 sub = get_or_create_subscription(request.user)
                 usage = PostUsage.get_or_create_for_user(request.user)
                 if sub.plan.posts_limit != -1 and usage.posts_used >= sub.plan.posts_limit:
@@ -144,9 +243,21 @@ class CreatePost(APIView):
                         status=status.HTTP_403_FORBIDDEN
                     )
                 
-                # Check Expiration
+
+                # Check Expiration.
+                # A PAID active plan is renewed externally by Razorpay (the
+                # subscription.charged webhook pushes current_period_end forward),
+                # so a lagging date shouldn't lock out a valid paid subscriber.
+                # Free trials and non-active plans (cancelled grace period,
+                # past-due, etc.) are still gated by current_period_end.
                 now = timezone.now()
-                if sub.current_period_end < now:
+                is_paid_active = (
+                    sub.status == UserSubscription.Status.ACTIVE
+                    and not sub.plan.is_free
+                )
+                if (not is_paid_active
+                        and sub.current_period_end
+                        and sub.current_period_end < now):
                     return Response(
                         {"error": "Your subscription or free trial has expired. Please upgrade to continue posting."},
                         status=status.HTTP_403_FORBIDDEN
@@ -162,28 +273,8 @@ class CreatePost(APIView):
                         status=status.HTTP_403_FORBIDDEN
                     )
 
-            # ── Handle uploaded files ──────────────────────────────────────
-            uploaded_files = request.FILES.getlist("media_files")
-            logger.info("CreatePost: received %d uploaded file(s)", len(uploaded_files))
-
-            extra_image_urls = []
-            if uploaded_files:
-                extra_image_urls = _save_uploaded_files(uploaded_files)
-
-            # ── Parse images ───────────────────────────────────────────────
-            raw_images = request.data.get("images", "")
-            existing_images = []
-            if isinstance(raw_images, list):
-                existing_images = raw_images
-            elif isinstance(raw_images, str) and raw_images.strip():
-                try:
-                    parsed = json.loads(raw_images)
-                    if isinstance(parsed, list):
-                        existing_images = parsed
-                except (ValueError, TypeError):
-                    existing_images = []
-
-            all_images = existing_images + extra_image_urls
+            # ── Handle media (file uploads, base64 data URIs, URLs) ────────
+            all_images, _ = _collect_request_images(request)
 
             # ── Parse target_accounts ──────────────────────────────────────
             raw_target_accounts = request.data.get("target_accounts", "")
@@ -254,8 +345,22 @@ class CreatePost(APIView):
                 post = Post.objects.get(pk=pk, user=request.user)
             except Post.DoesNotExist:
                 return Response({"error": "Post not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            # Normalize media (file uploads, base64 data URIs, URLs) the same way
+            # as create. Only override `images` when the request actually carried
+            # media, so a text-only edit doesn't wipe existing images.
+            if hasattr(request.data, 'dict'):
+                data = request.data.dict()
+            else:
+                data = dict(request.data)
+            all_images, media_provided = _collect_request_images(request)
+            if media_provided:
+                data["images"] = all_images
+            else:
+                data.pop("images", None)
+
             serializer = PostSerializer(
-                post, data=request.data, partial=True, context={"request": request})
+                post, data=data, partial=True, context={"request": request})
             serializer.is_valid(raise_exception=True)
             updated_post = serializer.save()
             if post.celery_task_id and post.status in [Post.Status.SCHEDULED, Post.Status.PENDING]:
@@ -413,10 +518,6 @@ class DeletePublishedPostView(APIView):
 
 
 class SchedulingView(APIView):
-    """
-    Unified view for managing posting slots (PostingSchedule) 
-    and viewing actual scheduled posts.
-    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
