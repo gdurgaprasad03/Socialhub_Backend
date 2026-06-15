@@ -69,6 +69,11 @@ DATABASES = {
     "default": dj_database_url.config(
         default=os.getenv("DATABASE_URL"),
         conn_max_age=600,
+        # Neon (serverless Postgres) recycles idle connections, so a pooled
+        # connection Django reuses can already be dead -> "SSL connection has
+        # been closed unexpectedly". Health checks make Django validate and
+        # transparently reconnect a stale connection at the start of a request.
+        conn_health_checks=True,
     )
 }
 
