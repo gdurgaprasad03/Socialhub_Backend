@@ -32,7 +32,7 @@ INSTALLED_APPS = [
     "core",
     "billing",
     "django_extensions",
-    "django_celery_results",   # stores task results in DB (survive Redis restart)
+    "django_celery_results", 
 ]
 
 MIDDLEWARE = [
