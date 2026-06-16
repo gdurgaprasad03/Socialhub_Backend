@@ -401,3 +401,59 @@ def poll_video_status(self, post_id, account_key, platform, video_urn):
             "Unexpected error polling video: post_id=%s account=%s", post_id, account_key
         )
         raise self.retry(exc=exc, countdown=5)
+
+
+# ── Production Safety Net ──────────────────────────────────────────────────────
+
+@shared_task(name="core.tasks.recover_stuck_posts")
+def recover_stuck_posts():
+    """
+    Periodic task (runs every 5 min via Celery Beat) that automatically
+    recovers posts stuck in PENDING or PROCESSING with no platform_results.
+
+    This covers the case where:
+      - The Celery worker was temporarily down when the post was created.
+      - Redis was restarted and queued task messages were lost.
+      - A worker process crashed before it could process the task.
+
+    Only re-queues posts older than 5 minutes to avoid racing with a normally
+    running worker that hasn't had time to start yet.
+    """
+    from datetime import timedelta
+    cutoff = timezone.now() - timedelta(minutes=5)
+
+    stuck = Post.objects.filter(
+        status__in=[Post.Status.PENDING, Post.Status.PROCESSING],
+        platform_results={},
+        created_at__lte=cutoff,
+    )
+
+    count = stuck.count()
+    if count == 0:
+        logger.debug("recover_stuck_posts: no stuck posts found")
+        return {"recovered": 0}
+
+    logger.warning("recover_stuck_posts: found %d stuck post(s) — re-queuing", count)
+
+    recovered = 0
+    for post in stuck:
+        try:
+            Post.objects.filter(id=post.id).update(
+                status=Post.Status.PENDING,
+                celery_task_id=None,
+            )
+            task = process_post.delay(post.id)
+            Post.objects.filter(id=post.id).update(celery_task_id=task.id)
+            logger.info(
+                "recover_stuck_posts: re-queued post_id=%d as task %s",
+                post.id, task.id,
+            )
+            recovered += 1
+        except Exception as exc:
+            logger.exception(
+                "recover_stuck_posts: failed to re-queue post_id=%d: %s",
+                post.id, exc,
+            )
+
+    logger.info("recover_stuck_posts: recovered %d/%d post(s)", recovered, count)
+    return {"recovered": recovered, "total_stuck": count}

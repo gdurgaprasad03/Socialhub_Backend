@@ -4,35 +4,33 @@ Documentation=https://docs.celeryq.dev
 After=network.target redis.service postgresql.service
 
 [Service]
-Type=forking
+Type=simple
 User=www-data
 Group=www-data
 
-# ── IMPORTANT: Update these paths to match your server setup ──
+# ── UPDATE THESE PATHS TO MATCH YOUR SERVER ──────────────────────────────────
 WorkingDirectory=/var/www/nxsocial/Socialmedia
 Environment="PATH=/var/www/nxsocial/venv/bin"
 EnvironmentFile=/var/www/nxsocial/Socialmedia/.env
+# ─────────────────────────────────────────────────────────────────────────────
 
 ExecStart=/var/www/nxsocial/venv/bin/celery \
     -A hub worker \
     --loglevel=info \
     --concurrency=2 \
-    --logfile=/var/www/nxsocial/Socialmedia/logs/celery_worker.log \
-    --pidfile=/tmp/celery_worker.pid \
-    --detach
+    --max-tasks-per-child=50 \
+    --without-gossip \
+    --without-mingle \
+    --without-heartbeat
 
-ExecStop=/bin/sh -c \
-    'if [ -f /tmp/celery_worker.pid ]; then \
-        kill -TERM $(cat /tmp/celery_worker.pid); \
-    fi'
+# Always restart the worker if it dies for any reason
+Restart=always
+RestartSec=5
 
-ExecReload=/bin/sh -c \
-    'if [ -f /tmp/celery_worker.pid ]; then \
-        kill -HUP $(cat /tmp/celery_worker.pid); \
-    fi'
+# Give the worker 60 seconds to finish current tasks on shutdown
+TimeoutStopSec=60
+KillMode=mixed
 
-Restart=on-failure
-RestartSec=10
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=celery-worker

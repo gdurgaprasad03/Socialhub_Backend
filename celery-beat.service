@@ -4,30 +4,27 @@ Documentation=https://docs.celeryq.dev
 After=network.target redis.service celery-worker.service
 
 [Service]
-Type=forking
+Type=simple
 User=www-data
 Group=www-data
 
-# ── IMPORTANT: Update these paths to match your server setup ──
+# ── UPDATE THESE PATHS TO MATCH YOUR SERVER ──────────────────────────────────
 WorkingDirectory=/var/www/nxsocial/Socialmedia
 Environment="PATH=/var/www/nxsocial/venv/bin"
 EnvironmentFile=/var/www/nxsocial/Socialmedia/.env
+# ─────────────────────────────────────────────────────────────────────────────
 
 ExecStart=/var/www/nxsocial/venv/bin/celery \
     -A hub beat \
     --loglevel=info \
-    --logfile=/var/www/nxsocial/Socialmedia/logs/celery_beat.log \
-    --pidfile=/tmp/celery_beat.pid \
-    --schedule=/tmp/celerybeat-schedule \
-    --detach
+    --scheduler django_celery_beat.schedulers:DatabaseScheduler
 
-ExecStop=/bin/sh -c \
-    'if [ -f /tmp/celery_beat.pid ]; then \
-        kill -TERM $(cat /tmp/celery_beat.pid); \
-    fi'
+# Always restart beat if it dies
+Restart=always
+RestartSec=5
 
-Restart=on-failure
-RestartSec=10
+TimeoutStopSec=30
+
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=celery-beat

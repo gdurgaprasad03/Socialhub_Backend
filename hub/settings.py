@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "core",
     "billing",
     "django_extensions",
+    "django_celery_results",   # stores task results in DB (survive Redis restart)
 ]
 
 MIDDLEWARE = [
@@ -152,17 +153,49 @@ CORS_ALLOWED_ORIGIN_REGEXES = [
 ]
 
 
+# ── Celery: Broker & Result Backend ──────────────────────────────────────────
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
-CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
+
+# Store task results in the PostgreSQL database instead of Redis.
+# This means task outcomes survive a Redis restart and can be inspected
+# via Django admin at any time.
+CELERY_RESULT_BACKEND = "django-db"
+CELERY_CACHE_BACKEND = "django-cache"
+
+# ── Celery: Serialisation ─────────────────────────────────────────────────────
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
-CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "120"))
-CELERY_TASK_SOFT_TIME_LIMIT = int(
-    os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "90"))
 
+# ── Celery: Time limits ───────────────────────────────────────────────────────
+CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "300"))
+CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "240"))
 
+# ── Celery: Production reliability settings ───────────────────────────────────
+# Acknowledge the task ONLY after it finishes (not when it starts).
+# If the worker crashes mid-task, Redis will re-deliver the task to another
+# worker instead of silently losing it.
+CELERY_TASK_ACKS_LATE = True
+
+# Never pre-fetch more than 1 task per worker process. Combined with acks_late
+# this ensures a crashed worker never silently drops tasks it had pre-fetched.
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+
+# Re-queue a task if no ack is received within 10 minutes (600 s).
+# Must be longer than CELERY_TASK_TIME_LIMIT so a running task is not
+# incorrectly considered lost.
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    "visibility_timeout": 600,
+}
+
+# Store results for 7 days so admin can inspect outcomes.
+CELERY_RESULT_EXPIRES = 60 * 60 * 24 * 7  # 7 days in seconds
+
+# Track task start time in the result backend.
+CELERY_TRACK_STARTED = True
+
+# ── Celery: Beat schedule ─────────────────────────────────────────────────────
 CELERY_BEAT_SCHEDULE = {
     "reset-monthly-usage": {
         "task": "billing.tasks.reset_monthly_usage",
@@ -171,6 +204,13 @@ CELERY_BEAT_SCHEDULE = {
     "expire-past-due": {
         "task": "billing.tasks.expire_past_due_subscriptions",
         "schedule": crontab(hour=1, minute=0),
+    },
+    # Production safety net: every 5 minutes scan for posts that are stuck
+    # in 'pending' status with no results (e.g. worker was restarted) and
+    # automatically re-queue them so they are never silently lost.
+    "recover-stuck-pending-posts": {
+        "task": "core.tasks.recover_stuck_posts",
+        "schedule": crontab(minute="*/5"),
     },
 }
 
