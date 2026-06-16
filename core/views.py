@@ -70,7 +70,8 @@ def _get_next_queue_slot(user):
 
     last_post = Post.objects.filter(
         user=user,
-        status__in=[Post.Status.SCHEDULED, Post.Status.PENDING, Post.Status.PROCESSING],
+        status__in=[Post.Status.SCHEDULED,
+                    Post.Status.PENDING, Post.Status.PROCESSING],
         scheduled_time__isnull=False
     ).order_by("-scheduled_time").first()
 
@@ -174,7 +175,8 @@ def _collect_request_images(request):
     uploaded_files = request.FILES.getlist("media_files")
     if uploaded_files:
         provided = True
-        logger.info("CreatePost: received %d uploaded file(s)", len(uploaded_files))
+        logger.info("CreatePost: received %d uploaded file(s)",
+                    len(uploaded_files))
         urls += _save_uploaded_files(uploaded_files)
 
     # The frontend also appends non-file image values (base64 data URIs / URLs)
@@ -248,7 +250,6 @@ class CreatePost(APIView):
                         {"error": "Monthly post limit reached. Please upgrade your plan."},
                         status=status.HTTP_403_FORBIDDEN
                     )
-                
 
                 # Check Expiration.
                 # A PAID active plan is renewed externally by Razorpay (the
@@ -268,11 +269,11 @@ class CreatePost(APIView):
                         {"error": "Your subscription or free trial has expired. Please upgrade to continue posting."},
                         status=status.HTTP_403_FORBIDDEN
                     )
-                
+
                 # Check Daily Limit
                 is_new_day = usage.last_post_at is None or usage.last_post_at.date() < now.date()
                 effective_daily_used = 0 if is_new_day else usage.daily_posts_used
-                
+
                 if sub.plan.posts_per_day != -1 and effective_daily_used >= sub.plan.posts_per_day:
                     return Response(
                         {"error": f"Daily limit reached ({sub.plan.posts_per_day} posts/day). Please try again tomorrow or upgrade."},
@@ -282,24 +283,27 @@ class CreatePost(APIView):
             # ── Handle media (file uploads, base64 data URIs, URLs) ────────
             all_images, _ = _collect_request_images(request)
 
-            # ── Parse target_accounts ──────────────────────────────────────
-            raw_target_accounts = request.data.get("target_accounts", "")
-            if isinstance(raw_target_accounts, str) and raw_target_accounts.strip():
-                try:
-                    raw_target_accounts = json.loads(raw_target_accounts)
-                except (ValueError, TypeError):
-                    raw_target_accounts = []
-
-            # ── Build data dict ────────────────────────────────────────────
+            # ── Build data dict and parse target_accounts ──────────────────
             if hasattr(request.data, 'dict'):
+                # If it's a QueryDict (multipart form), standard .get() drops list items.
                 data = request.data.dict()
+                raw_target_accounts = request.data.getlist("target_accounts")
             else:
+                # If it's standard dict (JSON)
                 data = dict(request.data)
+                raw_target_accounts = request.data.get("target_accounts", [])
+
+                if isinstance(raw_target_accounts, str) and raw_target_accounts.strip():
+                    try:
+                        raw_target_accounts = json.loads(raw_target_accounts)
+                    except (ValueError, TypeError):
+                        raw_target_accounts = []
 
             data["images"] = all_images
             data["target_accounts"] = raw_target_accounts
 
-            serializer = PostSerializer(data=data, context={"request": request})
+            serializer = PostSerializer(
+                data=data, context={"request": request})
             serializer.is_valid(raise_exception=True)
 
             scheduled_time = serializer.validated_data.get("scheduled_time")
@@ -316,12 +320,14 @@ class CreatePost(APIView):
                 initial_status = Post.Status.SCHEDULED if scheduled_time else Post.Status.PENDING
 
             post = serializer.save(user=request.user, status=initial_status)
-            logger.info("CreatePost: saved post id=%d target_accounts=%s", post.id, post.target_accounts)
+            logger.info("CreatePost: saved post id=%d target_accounts=%s",
+                        post.id, post.target_accounts)
 
             message = "Draft saved successfully"
             if not is_draft:
                 if scheduled_time:
-                    task_result = process_post.apply_async((post.id,), eta=scheduled_time)
+                    task_result = process_post.apply_async(
+                        (post.id,), eta=scheduled_time)
                     message = "Post scheduled successfully"
                 else:
                     task_result = process_post.delay(post.id)
@@ -370,9 +376,11 @@ class CreatePost(APIView):
             serializer.is_valid(raise_exception=True)
             updated_post = serializer.save()
             if post.celery_task_id and post.status in [Post.Status.SCHEDULED, Post.Status.PENDING]:
-                current_app.control.revoke(post.celery_task_id, terminate=False)
-            is_draft = request.data.get("is_draft", updated_post.status == Post.Status.DRAFT)
-            
+                current_app.control.revoke(
+                    post.celery_task_id, terminate=False)
+            is_draft = request.data.get(
+                "is_draft", updated_post.status == Post.Status.DRAFT)
+
             if not is_draft and updated_post.status == Post.Status.DRAFT:
                 # User is trying to publish a draft — check limits
                 from billing.views import get_or_create_subscription
@@ -384,13 +392,13 @@ class CreatePost(APIView):
                         {"error": "Monthly post limit reached. Please upgrade your plan."},
                         status=status.HTTP_403_FORBIDDEN
                     )
-                
+
                 # Check Daily Limit
                 from django.utils import timezone
                 now = timezone.now()
                 is_new_day = usage.last_post_at is None or usage.last_post_at.date() < now.date()
                 effective_daily_used = 0 if is_new_day else usage.daily_posts_used
-                
+
                 if sub.plan.posts_per_day != -1 and effective_daily_used >= sub.plan.posts_per_day:
                     return Response(
                         {"error": f"Daily limit reached ({sub.plan.posts_per_day} posts/day). Please try again tomorrow or upgrade."},
@@ -400,9 +408,10 @@ class CreatePost(APIView):
             if is_draft:
                 updated_post.status = Post.Status.DRAFT
                 updated_post.celery_task_id = None
-                updated_post.save(update_fields=["status", "celery_task_id", "updated_at"])
+                updated_post.save(
+                    update_fields=["status", "celery_task_id", "updated_at"])
             elif updated_post.status in [Post.Status.SCHEDULED, Post.Status.PENDING,
-                                          Post.Status.FAILED, Post.Status.DRAFT]:
+                                         Post.Status.FAILED, Post.Status.DRAFT]:
                 if updated_post.scheduled_time and updated_post.scheduled_time > timezone.now():
                     task_result = process_post.apply_async(
                         (updated_post.id,), eta=updated_post.scheduled_time)
@@ -411,7 +420,8 @@ class CreatePost(APIView):
                     task_result = process_post.delay(updated_post.id)
                     updated_post.status = Post.Status.PENDING
                 updated_post.celery_task_id = task_result.id
-                updated_post.save(update_fields=["status", "celery_task_id", "updated_at"])
+                updated_post.save(
+                    update_fields=["status", "celery_task_id", "updated_at"])
             return Response(PostSerializer(updated_post).data)
         except (serializers.ValidationError, ParseError) as exc:
             detail = getattr(exc, 'detail', str(exc))
@@ -434,13 +444,15 @@ class CreatePost(APIView):
             if post.status in [Post.Status.PUBLISHED, Post.Status.PARTIAL]:
                 for account_key, result in (post.platform_results or {}).items():
                     if result.get("success") and not result.get("deleted"):
-                        post_urn = result.get("post_urn") or result.get("post_id")
+                        post_urn = result.get(
+                            "post_urn") or result.get("post_id")
                         if post_urn:
                             try:
                                 account = SocialAccount.objects.get(
                                     id=int(account_key), user=request.user
                                 )
-                                service = get_service(account.platform, request.user, account=account)
+                                service = get_service(
+                                    account.platform, request.user, account=account)
                                 service.account = account
                                 service.delete_post(post_urn)
                             except Exception as exc:
@@ -479,7 +491,8 @@ class DeletePublishedPostView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        post_urn = platform_result.get("post_urn") or platform_result.get("post_id")
+        post_urn = platform_result.get(
+            "post_urn") or platform_result.get("post_id")
         if not post_urn:
             return Response(
                 {"error": "No post URN stored. Cannot delete remotely."},
@@ -487,8 +500,10 @@ class DeletePublishedPostView(APIView):
             )
 
         try:
-            account = SocialAccount.objects.get(id=int(account_id), user=request.user)
-            service = get_service(account.platform, request.user, account=account)
+            account = SocialAccount.objects.get(
+                id=int(account_id), user=request.user)
+            service = get_service(
+                account.platform, request.user, account=account)
             service.account = account
             service.delete_post(post_urn)
         except SocialAccount.DoesNotExist:
@@ -499,7 +514,8 @@ class DeletePublishedPostView(APIView):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
         except Exception:
-            logger.exception("Unexpected error deleting from platform: post_id=%s account=%s", pk, account_id)
+            logger.exception(
+                "Unexpected error deleting from platform: post_id=%s account=%s", pk, account_id)
             return Response(
                 {"error": "Unexpected error deleting from platform."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -534,7 +550,8 @@ class SchedulingView(APIView):
         # 2. Get actual upcoming posts
         posts = Post.objects.filter(
             user=request.user,
-            status__in=[Post.Status.SCHEDULED, Post.Status.PENDING, Post.Status.PROCESSING],
+            status__in=[Post.Status.SCHEDULED,
+                        Post.Status.PENDING, Post.Status.PROCESSING],
         ).order_by("scheduled_time")
         posts_data = PostSerializer(posts, many=True).data
 
@@ -566,9 +583,12 @@ class DashboardStatsView(APIView):
         try:
             user_posts = Post.objects.filter(user=request.user)
             total_posts = user_posts.count()
-            status_counts = user_posts.values("status").annotate(count=Count("status"))
-            detailed_status = {item["status"]: item["count"] for item in status_counts}
-            connected_accounts = SocialAccount.objects.filter(user=request.user).count()
+            status_counts = user_posts.values(
+                "status").annotate(count=Count("status"))
+            detailed_status = {item["status"]: item["count"]
+                               for item in status_counts}
+            connected_accounts = SocialAccount.objects.filter(
+                user=request.user).count()
             return Response({
                 "total_posts": total_posts,
                 "scheduled_posts": (
@@ -599,11 +619,13 @@ class SocialAccountView(APIView):
         try:
             if pk:
                 try:
-                    account = SocialAccount.objects.get(pk=pk, user=request.user)
+                    account = SocialAccount.objects.get(
+                        pk=pk, user=request.user)
                 except SocialAccount.DoesNotExist:
                     return Response({"error": "Social account not found"}, status=status.HTTP_404_NOT_FOUND)
                 return Response(SocialAccountSerializer(account).data)
-            accounts = SocialAccount.objects.filter(user=request.user).order_by("platform", "created_at")
+            accounts = SocialAccount.objects.filter(
+                user=request.user).order_by("platform", "created_at")
             return Response(SocialAccountSerializer(accounts, many=True).data)
         except Exception as exc:
             logger.exception("Error fetching social accounts")
@@ -655,26 +677,31 @@ class SocialConnectStartView(APIView):
                 callback_url = settings.LINKEDIN_REDIRECT_URI
             elif use_instagram_login:
                 callback_url = getattr(settings, "INSTAGRAM_REDIRECT_URI", "") or request.build_absolute_uri(
-                    reverse("social-connect-callback", kwargs={"platform": platform})
+                    reverse("social-connect-callback",
+                            kwargs={"platform": platform})
                 )
             elif platform == SocialAccount.Platform.TWITTER:
                 callback_url = getattr(settings, "TWITTER_REDIRECT_URI", "") or request.build_absolute_uri(
-                    reverse("social-connect-callback", kwargs={"platform": platform})
+                    reverse("social-connect-callback",
+                            kwargs={"platform": platform})
                 )
             elif platform == SocialAccount.Platform.YOUTUBE:
                 callback_url = getattr(settings, "YOUTUBE_REDIRECT_URI", "") or request.build_absolute_uri(
-                    reverse("social-connect-callback", kwargs={"platform": platform})
+                    reverse("social-connect-callback",
+                            kwargs={"platform": platform})
                 )
             else:
                 callback_url = request.build_absolute_uri(
-                    reverse("social-connect-callback", kwargs={"platform": platform})
+                    reverse("social-connect-callback",
+                            kwargs={"platform": platform})
                 )
 
             if platform == SocialAccount.Platform.LINKEDIN:
                 auth_url = build_linkedin_auth_url(callback_url, state_value)
                 note = "Connect your LinkedIn personal profile."
             elif use_instagram_login:
-                auth_url = build_instagram_login_auth_url(callback_url, state_value)
+                auth_url = build_instagram_login_auth_url(
+                    callback_url, state_value)
                 login_method = "instagram"
                 note = (
                     "Sign in with your Instagram professional (Business or Creator) "
@@ -717,11 +744,13 @@ class SocialConnectStartView(APIView):
             })
 
         except OAuthConfigurationError as exc:
-            logger.warning("OAuth config error: platform=%s user=%s: %s", platform, request.user.id, exc)
+            logger.warning(
+                "OAuth config error: platform=%s user=%s: %s", platform, request.user.id, exc)
             return Response({"error": "OAuth is not configured for this platform."},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except Exception:
-            logger.exception("Unexpected error starting OAuth: platform=%s user=%s", platform, request.user.id)
+            logger.exception(
+                "Unexpected error starting OAuth: platform=%s user=%s", platform, request.user.id)
             return Response({"error": "Unable to start social connect."},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -730,12 +759,15 @@ class SocialConnectCallbackView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request, platform):
-        provider_error = request.query_params.get("error") or request.query_params.get("error_message")
+        provider_error = request.query_params.get(
+            "error") or request.query_params.get("error_message")
         if provider_error:
             return self._error_response("OAuth provider returned an error.")
 
-        state_value = request.query_params.get("state") or request.query_params.get("oauth_token")
-        code = request.query_params.get("code") or request.query_params.get("oauth_verifier")
+        state_value = request.query_params.get(
+            "state") or request.query_params.get("oauth_token")
+        code = request.query_params.get(
+            "code") or request.query_params.get("oauth_verifier")
 
         if not state_value or not code:
             return self._error_response("Missing authorization response.")
@@ -778,13 +810,17 @@ class SocialConnectCallbackView(APIView):
         try:
             if platform == SocialAccount.Platform.INSTAGRAM and login_method == "instagram":
                 # Direct Instagram Login — no Facebook Page involved.
-                token_payload = exchange_instagram_login_code(code, callback_uri)
-                profile_payload = fetch_instagram_login_profile(token_payload["access_token"])
-                account_data = build_instagram_login_account_data(token_payload, profile_payload)
+                token_payload = exchange_instagram_login_code(
+                    code, callback_uri)
+                profile_payload = fetch_instagram_login_profile(
+                    token_payload["access_token"])
+                account_data = build_instagram_login_account_data(
+                    token_payload, profile_payload)
 
             elif platform == SocialAccount.Platform.LINKEDIN:
                 token_payload = exchange_linkedin_code(code, callback_uri)
-                profile_payload = fetch_linkedin_profile(token_payload["access_token"])
+                profile_payload = fetch_linkedin_profile(
+                    token_payload["access_token"])
 
             elif platform in [SocialAccount.Platform.FACEBOOK, SocialAccount.Platform.INSTAGRAM]:
                 token_payload = exchange_meta_code(code, callback_uri)
@@ -793,18 +829,22 @@ class SocialConnectCallbackView(APIView):
                 if platform == SocialAccount.Platform.FACEBOOK:
                     # Connect ALL pages the user manages (up to 5)
                     if not pages:
-                        raise ValueError("No Facebook Pages found for this account.")
+                        raise ValueError(
+                            "No Facebook Pages found for this account.")
                     # Connect first page — user can connect more by re-authorizing
                     profile_payload = pages[0]
                 else:
                     profile_payload = next(
-                        (p for p in pages if p.get("instagram_business_account")), None
+                        (p for p in pages if p.get(
+                            "instagram_business_account")), None
                     )
                     if not profile_payload:
-                        raise ValueError("No Instagram professional account found.")
+                        raise ValueError(
+                            "No Instagram professional account found.")
 
             elif platform == SocialAccount.Platform.TWITTER:
-                auth_payload = exchange_twitter_oauth1_code(state_value, code_verifier, code)
+                auth_payload = exchange_twitter_oauth1_code(
+                    state_value, code_verifier, code)
                 token_payload = {
                     "access_token": auth_payload["access_token"],
                     "oauth1_access_token": auth_payload["access_token"],
@@ -818,13 +858,15 @@ class SocialConnectCallbackView(APIView):
 
             elif platform == SocialAccount.Platform.YOUTUBE:
                 token_payload = exchange_youtube_code(code, callback_uri)
-                profile_payload = fetch_youtube_profile(token_payload["access_token"])
+                profile_payload = fetch_youtube_profile(
+                    token_payload["access_token"])
 
             else:
                 raise ValueError("Unsupported platform.")
 
             if account_data is None:
-                account_data = build_social_account_data(platform, token_payload, profile_payload)
+                account_data = build_social_account_data(
+                    platform, token_payload, profile_payload)
 
             # Set account_label from the profile
             account_label = (
@@ -865,14 +907,16 @@ class SocialConnectCallbackView(APIView):
             }, status=status.HTTP_200_OK)
 
         except (OAuthConfigurationError, SocialPlatformError, ValueError) as exc:
-            logger.warning("OAuth error: platform=%s user=%s: %s", platform, state_user.id, exc)
+            logger.warning("OAuth error: platform=%s user=%s: %s",
+                           platform, state_user.id, exc)
             OAuthState.objects.filter(pk=oauth_state.pk).update(used_at=None)
             return self._error_response(
                 str(exc) if isinstance(exc, ValueError)
                 else "Social account connection failed. Please try again."
             )
         except Exception:
-            logger.exception("Unexpected OAuth callback failure: platform=%s user=%s", platform, state_user.id)
+            logger.exception(
+                "Unexpected OAuth callback failure: platform=%s user=%s", platform, state_user.id)
             OAuthState.objects.filter(pk=oauth_state.pk).update(used_at=None)
             return self._error_response("Social account connection failed. Please try again.")
 
@@ -887,7 +931,8 @@ class SocialConnectCallbackView(APIView):
 
     def _error_response(self, message):
         url = _build_frontend_redirect(
-            settings.SOCIAL_OAUTH_ERROR_URL, {"status": "error", "message": message}
+            settings.SOCIAL_OAUTH_ERROR_URL, {
+                "status": "error", "message": message}
         )
         if url:
             return HttpResponseRedirect(url)
@@ -919,7 +964,7 @@ class LoginView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        
+
         try:
             keys = list(request.data.keys())
         except Exception:
