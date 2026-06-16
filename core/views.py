@@ -325,15 +325,29 @@ class CreatePost(APIView):
 
             message = "Draft saved successfully"
             if not is_draft:
-                if scheduled_time:
-                    task_result = process_post.apply_async(
-                        (post.id,), eta=scheduled_time)
-                    message = "Post scheduled successfully"
-                else:
-                    task_result = process_post.delay(post.id)
-                    message = "Post queued successfully"
-                post.celery_task_id = task_result.id
-                post.save(update_fields=["celery_task_id", "updated_at"])
+                try:
+                    if scheduled_time:
+                        task_result = process_post.apply_async(
+                            (post.id,), eta=scheduled_time)
+                        message = "Post scheduled successfully"
+                    else:
+                        task_result = process_post.delay(post.id)
+                        message = "Post queued successfully"
+                    post.celery_task_id = task_result.id
+                    post.save(update_fields=["celery_task_id", "updated_at"])
+                except Exception as broker_exc:
+                    # Celery broker (Redis) is temporarily unavailable.
+                    # The post is safely saved in the database as PENDING.
+                    # It will be re-queued automatically once the worker is back,
+                    # or manually via: python manage.py requeue_pending_posts
+                    logger.error(
+                        "Celery broker unavailable — post id=%d saved as PENDING "
+                        "and will be retried: %s", post.id, broker_exc
+                    )
+                    message = (
+                        "Post saved successfully but could not be queued immediately "
+                        "due to a background worker issue. It will be published shortly."
+                    )
 
             return Response(
                 {"message": message, "post": PostSerializer(post).data},
