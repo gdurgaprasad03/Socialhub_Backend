@@ -1,3 +1,4 @@
+import hashlib
 import logging
 
 from celery import shared_task
@@ -457,3 +458,77 @@ def recover_stuck_posts():
 
     logger.info("recover_stuck_posts: recovered %d/%d post(s)", recovered, count)
     return {"recovered": recovered, "total_stuck": count}
+
+
+# ── Token Refresh Safety Net ───────────────────────────────────────────────────
+
+@shared_task(name="core.tasks.refresh_expiring_tokens")
+def refresh_expiring_tokens():
+    """
+    Periodic task (runs every 6 hours via Celery Beat).
+    Proactively refreshes OAuth tokens that are expiring within the next 3 days.
+
+    This prevents silent post failures caused by expired access tokens.
+    Platforms with non-expiring tokens (Facebook Page tokens, Twitter OAuth1) are skipped.
+    """
+    from datetime import timedelta
+
+    now = timezone.now()
+    refresh_window = now + timedelta(days=3)
+
+    # Only platforms with refreshable, expiring tokens
+    refreshable_platforms = {"linkedin", "youtube", "instagram"}
+
+    expiring_accounts = SocialAccount.objects.filter(
+        platform__in=refreshable_platforms,
+        expires_at__isnull=False,
+        expires_at__lte=refresh_window,
+    ).select_related("user")
+
+    count = expiring_accounts.count()
+    if count == 0:
+        logger.debug("refresh_expiring_tokens: no expiring tokens found")
+        return {"refreshed": 0, "failed": 0}
+
+    logger.info("refresh_expiring_tokens: found %d account(s) with expiring tokens", count)
+
+    refreshed = 0
+    failed = 0
+
+    for account in expiring_accounts:
+        try:
+            service = get_service(account.platform, account.user, account=account)
+            service.refresh_access_token()
+            refreshed += 1
+            logger.info(
+                "refresh_expiring_tokens: refreshed %s account %s (user=%s)",
+                account.platform, account.display_name, account.user_id,
+            )
+        except Exception as exc:
+            failed += 1
+            logger.warning(
+                "refresh_expiring_tokens: failed to refresh %s account %s (user=%s): %s",
+                account.platform, account.display_name, account.user_id, exc,
+            )
+
+    logger.info(
+        "refresh_expiring_tokens: refreshed=%d failed=%d", refreshed, failed
+    )
+    return {"refreshed": refreshed, "failed": failed, "total": count}
+
+
+# ── OAuth State Cleanup ────────────────────────────────────────────────────────
+
+@shared_task(name="core.tasks.cleanup_expired_oauth_states")
+def cleanup_expired_oauth_states():
+    """
+    Periodic task (runs daily) to delete expired OAuthState records.
+    Keeps the database clean and prevents runaway growth.
+    """
+    from .models import OAuthState
+    from datetime import timedelta
+
+    cutoff = timezone.now() - timedelta(hours=1)  # 1 hour past expiry
+    deleted_count, _ = OAuthState.objects.filter(expires_at__lte=cutoff).delete()
+    logger.info("cleanup_expired_oauth_states: deleted %d expired record(s)", deleted_count)
+    return {"deleted": deleted_count}

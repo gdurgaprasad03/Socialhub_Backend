@@ -212,6 +212,18 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.recover_stuck_posts",
         "schedule": crontab(minute="*/5"),
     },
+    # Proactively refresh OAuth tokens expiring within 3 days.
+    # Runs every 6 hours so tokens are always refreshed well before expiry.
+    # Covers LinkedIn (60-day), YouTube (1-hour), Instagram Login (60-day).
+    "refresh-expiring-tokens": {
+        "task": "core.tasks.refresh_expiring_tokens",
+        "schedule": crontab(minute=0, hour="*/6"),
+    },
+    # Daily cleanup of expired OAuth state records to prevent DB bloat.
+    "cleanup-expired-oauth-states": {
+        "task": "core.tasks.cleanup_expired_oauth_states",
+        "schedule": crontab(hour=2, minute=30),
+    },
 }
 
 SOCIAL_REQUEST_TIMEOUT = int(os.getenv("SOCIAL_REQUEST_TIMEOUT", "20"))

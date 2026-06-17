@@ -546,7 +546,8 @@ def exchange_youtube_code(code, redirect_uri):
 
 
 def fetch_youtube_profile(access_token):
-    """Fetch YouTube/Google user profile."""
+    """Fetch YouTube/Google user profile + all channels the account manages."""
+    # Step 1: Get Google user info (gives us sub/email/name)
     response = requests.get(
         YOUTUBE_USERINFO_URL,
         headers={
@@ -559,6 +560,41 @@ def fetch_youtube_profile(access_token):
     _raise_for_error(response)
     if "sub" not in payload:
         raise SocialPlatformError("YouTube profile response did not include user id.")
+
+    # Step 2: Fetch all YouTube channels for this Google account
+    channels_response = requests.get(
+        "https://www.googleapis.com/youtube/v3/channels",
+        params={
+            "part": "snippet,contentDetails",
+            "mine": "true",
+            "maxResults": 50,
+        },
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        },
+        timeout=settings.SOCIAL_REQUEST_TIMEOUT,
+    )
+    channels_payload = {}
+    try:
+        channels_payload = _json_or_raise(channels_response)
+    except Exception:
+        pass  # Non-fatal — just won't show channel selector
+
+    channels = []
+    for item in channels_payload.get("items", []):
+        channels.append({
+            "id": item.get("id"),
+            "title": item.get("snippet", {}).get("title", ""),
+            "thumbnail": item.get("snippet", {}).get("thumbnails", {}).get("default", {}).get("url", ""),
+        })
+
+    payload["available_channels"] = channels
+    # If exactly one channel, auto-set channel_id and title
+    if len(channels) == 1:
+        payload["channel_id"] = channels[0]["id"]
+        payload["channel_title"] = channels[0]["title"]
+
     return payload
 
 
@@ -646,12 +682,16 @@ def build_social_account_data(platform, token_payload, profile_payload):
         }
 
     if platform == "youtube":
-        account_id = profile_payload.get("sub")
+        # Use specific channel ID if available (single channel or auto-selected)
+        channel_id = profile_payload.get("channel_id") or profile_payload.get("sub")
+        channel_title = profile_payload.get("channel_title") or profile_payload.get("name", "")
+        account_id = channel_id
         if not account_id:
-            raise SocialPlatformError("YouTube profile is missing the user id.")
+            raise SocialPlatformError("YouTube profile is missing the user/channel id.")
+        available_channels = profile_payload.get("available_channels", [])
         return {
             "account_id": account_id,
-            "platform_username": profile_payload.get("name", ""),
+            "platform_username": channel_title,
             "access_token": token_payload["access_token"],
             "refresh_token": token_payload.get("refresh_token", ""),
             "token_type": token_payload.get("token_type", "Bearer"),
@@ -659,6 +699,9 @@ def build_social_account_data(platform, token_payload, profile_payload):
             "metadata": {
                 "email": profile_payload.get("email"),
                 "picture": profile_payload.get("picture"),
+                "google_sub": profile_payload.get("sub"),
+                "available_channels": available_channels,
+                "channel_count": len(available_channels),
             },
         }
 

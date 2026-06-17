@@ -58,8 +58,23 @@ class FacebookService(BaseSocialService):
         url = f"{self.base_url}/{endpoint}"
         resp = requests.delete(url, params={"access_token": self.token},
                                timeout=settings.SOCIAL_REQUEST_TIMEOUT)
-        resp.raise_for_status()
-        return resp.json()
+        if not resp.ok:
+            try:
+                error = resp.json().get("error", {})
+                msg = error.get("message") or error.get("error_user_msg") or resp.text[:500]
+                code = error.get("code", "")
+                full_msg = f"Facebook Delete Error: {msg}"
+                if code:
+                    full_msg += f" (code: {code})"
+                raise SocialPlatformError(full_msg)
+            except SocialPlatformError:
+                raise
+            except Exception:
+                raise SocialPlatformError(f"Facebook Delete Error: {resp.text[:500]}")
+        result = resp.json()
+        if isinstance(result, dict) and "error" in result:
+            raise SocialPlatformError(str(result["error"]))
+        return result
 
     # ── Image upload helpers ──────────────────────────────────────────────
 

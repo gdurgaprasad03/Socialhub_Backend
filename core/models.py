@@ -156,6 +156,10 @@ class Post(models.Model):
         max_length=20, choices=Status.choices, default=Status.PENDING)
     scheduled_time = models.DateTimeField(null=True, blank=True)
     celery_task_id = models.CharField(max_length=255, null=True, blank=True)
+    idempotency_key = models.CharField(
+        max_length=64, blank=True, db_index=True,
+        help_text="Hash-based key to prevent duplicate post submissions (user_id+content+accounts+time)"
+    )
     platform_results = models.JSONField(
         default=dict, blank=True,
         help_text="Results keyed by social_account.id (str)"
