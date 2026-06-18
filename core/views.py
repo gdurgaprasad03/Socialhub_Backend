@@ -673,12 +673,11 @@ class SchedulingView(APIView):
         schedules = PostingSchedule.objects.filter(user=request.user)
         slots_data = PostingScheduleSerializer(schedules, many=True).data
 
-        # 2. Get actual upcoming posts
+        # 2. Get actual upcoming and past scheduled posts
         posts = Post.objects.filter(
             user=request.user,
-            status__in=[Post.Status.SCHEDULED,
-                        Post.Status.PENDING, Post.Status.PROCESSING],
-        ).order_by("scheduled_time")
+            scheduled_time__isnull=False,
+        ).exclude(status=Post.Status.DRAFT).order_by("scheduled_time")
         posts_data = PostSerializer(posts, many=True).data
 
         return Response({
