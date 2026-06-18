@@ -416,31 +416,45 @@ def poll_video_status(self, post_id, account_key, platform, video_urn):
 def recover_stuck_posts():
     """
     Periodic task (runs every 5 min via Celery Beat) that automatically
-    recovers posts stuck in PENDING or PROCESSING with no platform_results.
+    recovers posts that should have been processed but weren't.
 
-    This covers the case where:
-      - The Celery worker was temporarily down when the post was created.
-      - Redis was restarted and queued task messages were lost.
-      - A worker process crashed before it could process the task.
-
-    Only re-queues posts older than 5 minutes to avoid racing with a normally
-    running worker that hasn't had time to start yet.
+    Covers three cases:
+      1. PENDING/PROCESSING posts with no results older than 5 min
+         (worker was down or crashed after the task was queued).
+      2. SCHEDULED posts whose scheduled_time has already passed but whose
+         Celery ETA task was never executed (worker was down at that moment).
+         These stay stuck as SCHEDULED forever without this check.
     """
     from datetime import timedelta
-    cutoff = timezone.now() - timedelta(minutes=5)
+    now = timezone.now()
+    cutoff = now - timedelta(minutes=5)
 
-    stuck = Post.objects.filter(
+    # Case 1: stuck PENDING / PROCESSING
+    stuck_pending = Post.objects.filter(
         status__in=[Post.Status.PENDING, Post.Status.PROCESSING],
         platform_results={},
         created_at__lte=cutoff,
     )
 
-    count = stuck.count()
+    # Case 2: SCHEDULED posts whose time has already passed (overdue)
+    overdue_scheduled = Post.objects.filter(
+        status=Post.Status.SCHEDULED,
+        scheduled_time__lte=now,
+        platform_results={},
+    )
+
+    stuck = list(stuck_pending) + list(overdue_scheduled)
+    count = len(stuck)
+
     if count == 0:
         logger.debug("recover_stuck_posts: no stuck posts found")
         return {"recovered": 0}
 
-    logger.warning("recover_stuck_posts: found %d stuck post(s) — re-queuing", count)
+    logger.warning(
+        "recover_stuck_posts: found %d stuck post(s) — re-queuing "
+        "(%d pending/processing, %d overdue-scheduled)",
+        count, stuck_pending.count(), overdue_scheduled.count(),
+    )
 
     recovered = 0
     for post in stuck:
@@ -452,8 +466,8 @@ def recover_stuck_posts():
             task = process_post.delay(post.id)
             Post.objects.filter(id=post.id).update(celery_task_id=task.id)
             logger.info(
-                "recover_stuck_posts: re-queued post_id=%d as task %s",
-                post.id, task.id,
+                "recover_stuck_posts: re-queued post_id=%d (was %s) as task %s",
+                post.id, post.status, task.id,
             )
             recovered += 1
         except Exception as exc:
@@ -464,6 +478,7 @@ def recover_stuck_posts():
 
     logger.info("recover_stuck_posts: recovered %d/%d post(s)", recovered, count)
     return {"recovered": recovered, "total_stuck": count}
+
 
 
 # ── Token Refresh Safety Net ───────────────────────────────────────────────────
