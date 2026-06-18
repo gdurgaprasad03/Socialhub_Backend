@@ -98,9 +98,6 @@ MEDIA_ROOT = BASE_DIR / "media"
 STATIC_ROOT.mkdir(exist_ok=True)
 MEDIA_ROOT.mkdir(exist_ok=True)
 
-# Allow large media uploads (base64 images + mp4 videos in post payloads).
-# Default is 2.5 MB, which causes RequestDataTooBig -> connection reset on the
-# dev server before any HTTP response is returned (empty Network tab response).
 DATA_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100 MB
 FILE_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100 MB
 
@@ -155,10 +152,6 @@ CORS_ALLOWED_ORIGIN_REGEXES = [
 
 # ── Celery: Broker & Result Backend ──────────────────────────────────────────
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
-
-# Store task results in the PostgreSQL database instead of Redis.
-# This means task outcomes survive a Redis restart and can be inspected
-# via Django admin at any time.
 CELERY_RESULT_BACKEND = "django-db"
 CELERY_CACHE_BACKEND = "django-cache"
 
@@ -172,24 +165,13 @@ CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "300"))
 CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "240"))
 
-# ── Celery: Production reliability settings ───────────────────────────────────
-# Acknowledge the task ONLY after it finishes (not when it starts).
-# If the worker crashes mid-task, Redis will re-deliver the task to another
-# worker instead of silently losing it.
+
 CELERY_TASK_ACKS_LATE = True
-
-# Never pre-fetch more than 1 task per worker process. Combined with acks_late
-# this ensures a crashed worker never silently drops tasks it had pre-fetched.
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
-
-# Re-queue a task if no ack is received within 10 minutes (600 s).
-# Must be longer than CELERY_TASK_TIME_LIMIT so a running task is not
-# incorrectly considered lost.
 CELERY_BROKER_TRANSPORT_OPTIONS = {
     "visibility_timeout": 600,
 }
 
-# Store results for 7 days so admin can inspect outcomes.
 CELERY_RESULT_EXPIRES = 60 * 60 * 24 * 7  # 7 days in seconds
 
 # Track task start time in the result backend.
@@ -205,16 +187,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "billing.tasks.expire_past_due_subscriptions",
         "schedule": crontab(hour=1, minute=0),
     },
-    # Production safety net: every 5 minutes scan for posts that are stuck
-    # in 'pending' status with no results (e.g. worker was restarted) and
-    # automatically re-queue them so they are never silently lost.
     "recover-stuck-pending-posts": {
         "task": "core.tasks.recover_stuck_posts",
         "schedule": crontab(minute="*/5"),
     },
-    # Proactively refresh OAuth tokens expiring within 3 days.
-    # Runs every 6 hours so tokens are always refreshed well before expiry.
-    # Covers LinkedIn (60-day), YouTube (1-hour), Instagram Login (60-day).
+   
     "refresh-expiring-tokens": {
         "task": "core.tasks.refresh_expiring_tokens",
         "schedule": crontab(minute=0, hour="*/6"),
@@ -240,9 +217,6 @@ META_APP_ID = os.getenv("META_APP_ID", "")
 META_APP_SECRET = os.getenv("META_APP_SECRET", "")
 META_GRAPH_API_VERSION = os.getenv("META_GRAPH_API_VERSION", "v23.0")
 
-# Instagram API with Instagram Login (direct login, no Facebook Page required).
-# These are the "Instagram app" credentials found in the Meta App dashboard under
-# Instagram > API setup with Instagram login — distinct from META_APP_ID/SECRET above.
 INSTAGRAM_APP_ID = os.getenv("INSTAGRAM_APP_ID", "")
 INSTAGRAM_APP_SECRET = os.getenv("INSTAGRAM_APP_SECRET", "")
 INSTAGRAM_REDIRECT_URI = os.getenv("INSTAGRAM_REDIRECT_URI", "")
@@ -275,9 +249,6 @@ USE_X_FORWARDED_HOST = True
 USE_X_FORWARDED_PORT = True
 
 
-# Production HTTPS / security hardening.
-# Defaults are OFF so local dev (plain HTTP) keeps working.
-# Enable these in the server .env once HTTPS is set up behind Nginx.
 SECURE_SSL_REDIRECT = str(os.getenv(
     "SECURE_SSL_REDIRECT", "False")).strip().lower() == "true"
 SESSION_COOKIE_SECURE = str(os.getenv(
@@ -306,10 +277,6 @@ cloudinary.config(
 )
 
 
-# ── Logging ───────────────────────────────────────────────────────────────
-# Mirror everything to logs/django.log (in addition to the console) so request
-# failures — including ones the browser can't show because the connection was
-# reset — are captured for inspection.
 LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 

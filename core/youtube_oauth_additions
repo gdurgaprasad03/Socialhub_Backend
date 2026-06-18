@@ -27,7 +27,7 @@ def build_youtube_auth_url(redirect_uri, state):
             "response_type": "code",
             "scope": " ".join(YOUTUBE_DEFAULT_SCOPES),
             "state": state,
-            "access_type": "offline",   # needed to get refresh token
+            "access_type": "offline",  
             "prompt": "consent",         # force consent screen to always get refresh token
         }
     )

@@ -185,8 +185,15 @@ def _process_video_post(post, target_accounts):
     sync_all_success = all(r.get("success") for r in sync_results.values()) if sync_results else True
 
     if not async_accounts:
-        final_status = Post.Status.PUBLISHED if sync_all_success else Post.Status.FAILED
-        published_at = timezone.now() if sync_all_success else None
+        sync_success_count = sum(1 for r in sync_results.values() if r.get("success"))
+        sync_total = len(sync_results)
+        if sync_success_count == sync_total:
+            final_status = Post.Status.PUBLISHED
+        elif sync_success_count > 0:
+            final_status = Post.Status.PARTIAL
+        else:
+            final_status = Post.Status.FAILED
+        published_at = timezone.now() if final_status in (Post.Status.PUBLISHED, Post.Status.PARTIAL) else None
         Post.objects.filter(id=post.id).update(
             platform_results=results,
             status=final_status,

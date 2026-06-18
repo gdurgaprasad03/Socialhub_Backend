@@ -82,20 +82,27 @@ def _get_next_queue_slot(user):
         reference_time = now
 
     for _ in range(14):
-        ref_day = reference_time.weekday()
-        ref_time = reference_time.time()
+        # Convert to local time so day-of-week and time comparisons align with
+        # the schedule.time values the user entered in their local timezone (IST).
+        local_ref = timezone.localtime(reference_time)
+        ref_day = local_ref.weekday()
+        ref_time = local_ref.time()
         for schedule in schedules:
             if schedule.day_of_week > ref_day or (
                 schedule.day_of_week == ref_day and schedule.time > ref_time
             ):
-                target_date = reference_time.date() + timedelta(
+                target_date = local_ref.date() + timedelta(
                     days=(schedule.day_of_week - ref_day)
                 )
                 dt = datetime.combine(target_date, schedule.time)
                 return timezone.make_aware(dt)
-        days_ahead = 7 - reference_time.weekday()
-        reference_time = (reference_time + timedelta(days=days_ahead)).replace(
+        days_ahead = 7 - local_ref.weekday()
+        next_local = (local_ref + timedelta(days=days_ahead)).replace(
             hour=0, minute=0, second=0, microsecond=0
+        )
+        reference_time = timezone.make_aware(
+            datetime(next_local.year, next_local.month, next_local.day),
+            timezone.get_current_timezone(),
         )
     return None
 
@@ -582,25 +589,37 @@ class CreatePost(APIView):
                 for account_key, result in (post.platform_results or {}).items():
                     if result.get("success") and not result.get("deleted"):
                         post_urn = result.get("post_urn") or result.get("post_id")
-                        if post_urn:
-                            try:
-                                account = SocialAccount.objects.get(
-                                    id=int(account_key), user=request.user
-                                )
-                                service = get_service(
-                                    account.platform, request.user, account=account)
-                                service.account = account
-                                service.delete_post(post_urn)
-                                
-                                if account_key not in updated_results:
-                                    updated_results[account_key] = result.copy()
-                                updated_results[account_key]["deleted"] = True
-                            except Exception as exc:
-                                logger.exception(
-                                    "Remote delete failed: post_id=%s account=%s error=%s",
-                                    pk, account_key, exc
-                                )
-                                errors[account_key] = str(exc)
+                        if not post_urn:
+                            # Platform ID was never stored — cannot delete remotely.
+                            # Treat as an error so the local record is preserved and
+                            # the user sees which account couldn't be cleaned up.
+                            errors[account_key] = (
+                                "No platform post ID recorded for this account; "
+                                "cannot delete remotely. Use ?force=true to remove locally."
+                            )
+                            logger.warning(
+                                "Cannot delete remotely — no post_urn/post_id stored: "
+                                "post_id=%s account=%s", pk, account_key
+                            )
+                            continue
+                        try:
+                            account = SocialAccount.objects.get(
+                                id=int(account_key), user=request.user
+                            )
+                            service = get_service(
+                                account.platform, request.user, account=account)
+                            service.account = account
+                            service.delete_post(post_urn)
+
+                            if account_key not in updated_results:
+                                updated_results[account_key] = result.copy()
+                            updated_results[account_key]["deleted"] = True
+                        except Exception as exc:
+                            logger.exception(
+                                "Remote delete failed: post_id=%s account=%s error=%s",
+                                pk, account_key, exc
+                            )
+                            errors[account_key] = str(exc)
 
                 post.platform_results = updated_results
                 post.save(update_fields=["platform_results", "updated_at"])
@@ -952,7 +971,17 @@ class SocialConnectCallbackView(APIView):
         provider_error = request.query_params.get(
             "error") or request.query_params.get("error_message")
         if provider_error:
-            return self._error_response("OAuth provider returned an error.")
+            error_description = (
+                request.query_params.get("error_description")
+                or request.query_params.get("error_reason")
+                or ""
+            )
+            logger.warning(
+                "OAuth provider error: platform=%s error=%s description=%s",
+                platform, provider_error, error_description,
+            )
+            detail = f"{provider_error}: {error_description}" if error_description else provider_error
+            return self._error_response(f"OAuth provider returned an error: {detail}")
 
         state_value = request.query_params.get(
             "state") or request.query_params.get("oauth_token")
