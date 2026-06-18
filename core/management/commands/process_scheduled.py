@@ -2,6 +2,7 @@ import time
 import logging
 from django.core.management.base import BaseCommand
 from django.utils import timezone
+from django.db.models import Q
 from core.models import Post
 from core.tasks import process_post
 
@@ -9,13 +10,13 @@ logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
-    help = "Process overdue scheduled posts synchronously without needing a running Celery worker."
+    help = "Process PENDING and overdue SCHEDULED posts synchronously without needing a running Celery worker."
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--loop",
             action="store_true",
-            help="Run in an infinite loop checking for scheduled posts every 10 seconds.",
+            help="Run in an infinite loop checking for posts every 10 seconds.",
         )
 
     def handle(self, *args, **options):
@@ -25,17 +26,18 @@ class Command(BaseCommand):
         try:
             while True:
                 now = timezone.now()
-                # Find posts that are SCHEDULED and whose scheduled_time is in the past (<= now)
+                # Find posts that are PENDING, or SCHEDULED and whose scheduled_time is in the past (<= now)
                 overdue_posts = Post.objects.filter(
-                    status=Post.Status.SCHEDULED,
-                    scheduled_time__lte=now,
+                    Q(status=Post.Status.PENDING) |
+                    Q(status=Post.Status.SCHEDULED, scheduled_time__lte=now)
                 )
                 
                 count = overdue_posts.count()
                 if count > 0:
-                    self.stdout.write(f"Found {count} overdue scheduled post(s) to process.")
+                    self.stdout.write(f"Found {count} post(s) to process.")
                     for post in overdue_posts:
-                        self.stdout.write(f"Processing Post #{post.id} (scheduled for {post.scheduled_time})...")
+                        time_str = f"scheduled for {post.scheduled_time}" if post.scheduled_time else "immediate"
+                        self.stdout.write(f"Processing Post #{post.id} ({time_str})...")
                         try:
                             # Execute the Celery task synchronously in the current thread
                             result = process_post.apply(args=(post.id,))
