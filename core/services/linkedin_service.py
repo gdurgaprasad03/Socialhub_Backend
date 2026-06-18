@@ -82,11 +82,22 @@ class LinkedInService(BaseSocialService):
 
     # ── Image upload ──────────────────────────────────────────────────────
 
+    def _author_urn(self):
+        """Return the correct author URN for LinkedIn REST API.
+
+        LinkedIn's /rest/posts API (LinkedIn-Version 202502+) requires
+        ``urn:li:member:{sub}`` where ``sub`` is the OpenID Connect subject
+        identifier stored in account_id.  The legacy ``urn:li:person:{id}``
+        URN is only valid for the old /v2/ APIs and causes posts to be
+        accepted (HTTP 201) but silently not appear on the profile.
+        """
+        return f"urn:li:member:{self.account.account_id}"
+
     def _register_image_upload(self):
         url = "https://api.linkedin.com/rest/images?action=initializeUpload"
         payload = {
             "initializeUploadRequest": {
-                "owner": f"urn:li:person:{self.account.account_id}",
+                "owner": self._author_urn(),
             }
         }
         result = self.post_json(url, headers=self._auth_headers(), payload=payload)
@@ -161,7 +172,7 @@ class LinkedInService(BaseSocialService):
         url = "https://api.linkedin.com/rest/videos?action=initializeUpload"
         payload = {
             "initializeUploadRequest": {
-                "owner": f"urn:li:person:{self.account.account_id}",
+                "owner": self._author_urn(),
                 "fileSizeBytes": file_size_bytes,
                 "uploadCaptions": False,
                 "uploadThumbnail": False,
@@ -276,8 +287,9 @@ class LinkedInService(BaseSocialService):
         Publish a video post using LinkedIn's /rest/posts API.
         """
         url = "https://api.linkedin.com/rest/posts"
+        author = self._author_urn()
         payload = {
-            "author": f"urn:li:person:{self.account.account_id}",
+            "author": author,
             "commentary": post.content,
             "visibility": "PUBLIC",
             "distribution": {
@@ -293,7 +305,7 @@ class LinkedInService(BaseSocialService):
             "isReshareDisabledByAuthor": False,
         }
 
-        logger.info("Publishing video post via /rest/posts — video_urn=%s", video_urn)
+        logger.info("Publishing video post via /rest/posts — video_urn=%s author=%s", video_urn, author)
 
         resp = self.post_json(url, payload=payload, headers=self._auth_headers())
         post_urn = resp["headers"].get("x-restli-id") or resp["headers"].get("X-RestLi-Id")
@@ -305,10 +317,11 @@ class LinkedInService(BaseSocialService):
     def create_post(self, post):
         """Create image or text post via /rest/posts. Replacing deprecated /v2/ugcPosts."""
         url = "https://api.linkedin.com/rest/posts"
+        author = self._author_urn()
         asset_urns = self._upload_all_images(post)
 
         payload = {
-            "author": f"urn:li:person:{self.account.account_id}",
+            "author": author,
             "commentary": post.content,
             "visibility": "PUBLIC",
             "distribution": {
@@ -335,6 +348,7 @@ class LinkedInService(BaseSocialService):
              # This should have been handled by the task but if called directly:
              raise SocialPlatformError("Video posts should use publish_video_post")
 
+        logger.info("Creating LinkedIn post — author=%s images=%d", author, len(asset_urns))
         result = self.post_json(url, payload=payload, headers=self._auth_headers())
         resp_headers = result["headers"]
         post_urn = resp_headers.get("x-restli-id") or resp_headers.get("X-RestLi-Id")
@@ -344,7 +358,7 @@ class LinkedInService(BaseSocialService):
         if not post_urn:
             raise SocialPlatformError("LinkedIn did not return a post URN.")
 
-        logger.info("Post created — post_urn=%s", post_urn)
+        logger.info("Post created — post_urn=%s author=%s", post_urn, author)
         return {"post_urn": post_urn, "body": result["body"]}
 
     def delete_post(self, post_urn):

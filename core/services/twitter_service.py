@@ -16,11 +16,13 @@ class TwitterService(BaseSocialService):
 
     def __init__(self, user, account=None):
         super().__init__(user, account=account)
-        self.token = self.account.access_token
+        # NOTE: Do NOT cache access_token here. Always read from
+        # self.account.access_token so that any in-flight token refresh
+        # (performed by ensure_active_token) is automatically picked up.
 
     def _auth_headers(self):
         return {
-            "Authorization": f"Bearer {self.token}",
+            "Authorization": f"Bearer {self.account.access_token}",
             "Content-Type": "application/json",
         }
 

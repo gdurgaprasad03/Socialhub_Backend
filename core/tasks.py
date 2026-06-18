@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import logging
 
@@ -78,48 +79,53 @@ def process_post(self, post_id):
 
 
 def _get_post_for_account(post, account):
-    """Apply account-specific content override and platform options."""
+    """Return a shallow-copied post with account-specific overrides applied.
+
+    We work on an isolated copy so mutations never bleed across accounts
+    even if an exception fires mid-loop before the next iteration can
+    restore the shared object.
+    """
+    # Shallow-copy the post object; replace only the fields we may mutate.
+    post_copy = copy.copy(post)
+    post_copy.platform_options = dict(post.platform_options or {})
+
     content_overrides = post.content_overrides or {}
     override = content_overrides.get(str(account.id))
     if override:
-        post.content = override
+        post_copy.content = override
 
-    platform_options = post.platform_options or {}
+    platform_options = post_copy.platform_options
     account_options = platform_options.get(str(account.id), {})
 
     if account.platform == "instagram" and "post_type" in account_options:
         merged = dict(platform_options)
         merged["instagram"] = {"post_type": account_options["post_type"]}
-        post.platform_options = merged
+        post_copy.platform_options = merged
 
     if account.platform == "youtube" and "privacy" in account_options:
         merged = dict(platform_options)
         merged["youtube"] = {"privacy": account_options["privacy"]}
-        post.platform_options = merged
+        post_copy.platform_options = merged
 
-    return post
+    return post_copy
 
 
 def _process_video_post(post, target_accounts):
     results = {}
     upload_count = 0
-    original_content = post.content
-    original_platform_options = dict(post.platform_options or {})
 
     for account in target_accounts:
         account_key = str(account.id)
         processed_at = timezone.now().isoformat()
 
-        post.content = original_content
-        post.platform_options = dict(original_platform_options)
-
         try:
-            post = _get_post_for_account(post, account)
+            # Build an isolated copy for this account.
+            account_post = _get_post_for_account(post, account)
             service = get_service(account.platform, post.user, account=account)
             service.account = account
 
             if account.platform in SYNC_VIDEO_PLATFORMS:
-                response_data = service.create_post(post)
+                response_data = service.create_post(account_post)
                 platform_result = {
                     "success": True,
                     "platform": account.platform,
@@ -131,12 +137,16 @@ def _process_video_post(post, target_accounts):
                     platform_result.update(response_data)
                 results[account_key] = platform_result
                 upload_count += 1
+                logger.info(
+                    "Sync video post published: post_id=%s account=%s platform=%s",
+                    post.id, account.display_name, account.platform,
+                )
                 continue
 
             if not hasattr(service, "upload_video"):
                 raise NotImplementedError(f"{account.platform} does not support video upload.")
 
-            video_urn = service.upload_video(post)
+            video_urn = service.upload_video(account_post)
             poll_video_status.apply_async(
                 args=[post.id, account_key, account.platform, video_urn],
                 countdown=10,
@@ -155,7 +165,8 @@ def _process_video_post(post, target_accounts):
 
         except Exception as exc:
             logger.exception(
-                "Video upload failed: post_id=%s account=%s", post.id, account.display_name
+                "Video upload failed: post_id=%s account=%s platform=%s",
+                post.id, account.display_name, account.platform,
             )
             results[account_key] = {
                 "success": False,
@@ -165,9 +176,6 @@ def _process_video_post(post, target_accounts):
                 "error": str(exc),
                 "processed_at": processed_at,
             }
-
-    post.content = original_content
-    post.platform_options = original_platform_options
 
     async_accounts = [
         str(acc.id) for acc in target_accounts
@@ -208,22 +216,18 @@ def _process_video_post(post, target_accounts):
 def _process_image_post(post, target_accounts):
     results = {}
     success_count = 0
-    original_content = post.content
-    original_platform_options = dict(post.platform_options or {})
 
     for account in target_accounts:
         account_key = str(account.id)
         processed_at = timezone.now().isoformat()
 
-        post.content = original_content
-        post.platform_options = dict(original_platform_options)
-
         try:
-            post = _get_post_for_account(post, account)
+            # Build an isolated copy for this account — no shared mutable state.
+            account_post = _get_post_for_account(post, account)
             service = get_service(account.platform, post.user, account=account)
             service.account = account
 
-            response_data = service.create_post(post)
+            response_data = service.create_post(account_post)
 
             platform_result = {
                 "success": True,
@@ -243,10 +247,15 @@ def _process_image_post(post, target_accounts):
 
             results[account_key] = platform_result
             success_count += 1
+            logger.info(
+                "Post published: post_id=%s account=%s platform=%s",
+                post.id, account.display_name, account.platform,
+            )
 
         except Exception as exc:
             logger.exception(
-                "Post publish failed: post_id=%s account=%s", post.id, account.display_name
+                "Post publish failed: post_id=%s account=%s platform=%s",
+                post.id, account.display_name, account.platform,
             )
             results[account_key] = {
                 "success": False,
@@ -256,9 +265,6 @@ def _process_image_post(post, target_accounts):
                 "error": str(exc),
                 "processed_at": processed_at,
             }
-
-    post.content = original_content
-    post.platform_options = original_platform_options
 
     total = len(target_accounts)
     if success_count == total:
