@@ -292,6 +292,10 @@ class CreatePost(APIView):
                     raw_ta = _json.loads(raw_ta)
                 except Exception:
                     raw_ta = []
+            # Guard: if the frontend sent a bare integer (or any non-list scalar)
+            # wrap it so sorted() doesn't raise 'int object is not iterable'.
+            if not isinstance(raw_ta, (list, tuple)):
+                raw_ta = [raw_ta] if raw_ta is not None else []
             _idem_src = f"{request.user.id}:{request.data.get('content', '')}:{sorted(raw_ta)}:{request.data.get('scheduled_time', '')}"
             idempotency_key = hashlib.sha256(_idem_src.encode()).hexdigest()[:64]
             from datetime import timedelta
