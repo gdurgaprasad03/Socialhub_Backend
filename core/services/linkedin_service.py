@@ -83,15 +83,14 @@ class LinkedInService(BaseSocialService):
     # ── Image upload ──────────────────────────────────────────────────────
 
     def _author_urn(self):
-        """Return the correct author URN for LinkedIn REST API.
+        """Return the author/owner URN for LinkedIn REST API calls.
 
-        LinkedIn's /rest/posts API (LinkedIn-Version 202502+) requires
-        ``urn:li:member:{sub}`` where ``sub`` is the OpenID Connect subject
-        identifier stored in account_id.  The legacy ``urn:li:person:{id}``
-        URN is only valid for the old /v2/ APIs and causes posts to be
-        accepted (HTTP 201) but silently not appear on the profile.
+        The ``sub`` from LinkedIn's OpenID Connect userinfo endpoint is the
+        member's person ID.  The correct URN for the /rest/posts and
+        /rest/images APIs is ``urn:li:person:{sub}``.
         """
-        return f"urn:li:member:{self.account.account_id}"
+        return f"urn:li:person:{self.account.account_id}"
+
 
     def _register_image_upload(self):
         url = "https://api.linkedin.com/rest/images?action=initializeUpload"
