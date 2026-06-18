@@ -244,10 +244,8 @@ class AutoSaveDraftView(APIView):
 
             # Handle uploaded files
             uploaded_files = request.FILES.getlist("media_files")
-            extra_image_urls = []
-            for f in uploaded_files:
-                file_path = default_storage.save(f"post_media/{f.name}", f)
-                extra_image_urls.append(django_settings.MEDIA_URL + file_path)
+            from ..views import _save_uploaded_files
+            extra_image_urls = _save_uploaded_files(uploaded_files)
 
             raw_images = request.data.get("images", "")
             existing_images = []

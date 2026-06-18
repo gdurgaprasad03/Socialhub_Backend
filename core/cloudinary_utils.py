@@ -101,7 +101,14 @@ def upload_video_to_cloudinary(source):
         str: secure HTTPS URL of the uploaded video
     """
     try:
-        if isinstance(source, str) and source.startswith(("http://", "https://")):
+        if hasattr(source, "read"):
+            source.seek(0)
+            result = cloudinary.uploader.upload(
+                source,
+                folder="socialmedia/videos",
+                resource_type="video",
+            )
+        elif isinstance(source, str) and source.startswith(("http://", "https://")):
             logger.info("Downloading video from URL for Cloudinary upload: %s", source)
             resp = requests.get(source, stream=True, timeout=120)
             resp.raise_for_status()

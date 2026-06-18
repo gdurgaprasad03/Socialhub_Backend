@@ -51,6 +51,7 @@ from .services.oauth import (
 )
 from .services.factory import get_service
 from .tasks import process_post
+from .cloudinary_utils import upload_image_to_cloudinary, upload_video_to_cloudinary
 
 logger = logging.getLogger(__name__)
 
@@ -102,9 +103,19 @@ def _get_next_queue_slot(user):
 def _save_uploaded_files(files):
     saved_urls = []
     for f in files:
-        file_path = default_storage.save(f"post_media/{f.name}", f)
-        url = settings.MEDIA_URL + file_path
-        saved_urls.append(url)
+        content_type = getattr(f, "content_type", "")
+        is_video = content_type.startswith("video/") or f.name.lower().endswith(
+            (".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v")
+        )
+        try:
+            if is_video:
+                url = upload_video_to_cloudinary(f)
+            else:
+                url = upload_image_to_cloudinary(f)
+            saved_urls.append(url)
+        except Exception as e:
+            logger.exception("Failed to upload file to Cloudinary: %s", f.name)
+            raise
     return saved_urls
 
 
@@ -117,8 +128,8 @@ _MIME_EXT = {
 
 
 def _save_base64_media(data_uri):
-    """Decode a `data:<mime>;base64,<payload>` URI, store it under MEDIA, and
-    return its /media URL. Returns None if the value isn't a decodable data URI."""
+    """Decode a `data:<mime>;base64,<payload>` URI, upload to Cloudinary, and
+    return its secure URL. Returns None if the value isn't a decodable data URI."""
     if not isinstance(data_uri, str) or not data_uri.startswith("data:"):
         return None
     try:
@@ -131,10 +142,18 @@ def _save_base64_media(data_uri):
     except Exception:
         logger.warning("Skipping undecodable base64 media value")
         return None
-    file_path = default_storage.save(
-        f"post_media/{uuid.uuid4().hex}.{ext}", ContentFile(raw)
-    )
-    return settings.MEDIA_URL + file_path
+
+    is_video = mime.startswith("video/")
+    try:
+        file_obj = ContentFile(raw, name=f"{uuid.uuid4().hex}.{ext}")
+        if is_video:
+            url = upload_video_to_cloudinary(file_obj)
+        else:
+            url = upload_image_to_cloudinary(file_obj)
+        return url
+    except Exception as exc:
+        logger.exception("Failed to upload base64 media to Cloudinary: %s", exc)
+        return None
 
 
 def _normalize_image_inputs(values):
@@ -280,8 +299,29 @@ class CreatePost(APIView):
                         status=status.HTTP_403_FORBIDDEN
                     )
 
+            # ── Intercept video_file and media_file direct uploads ─────────
+            video_url = None
+            image_url = None
+            if "video_file" in request.FILES:
+                try:
+                    vf = request.FILES.pop("video_file")[0]
+                except (KeyError, IndexError, TypeError):
+                    vf = request.FILES.pop("video_file", None)
+                if vf:
+                    video_url = upload_video_to_cloudinary(vf)
+
+            if "media_file" in request.FILES:
+                try:
+                    mf = request.FILES.pop("media_file")[0]
+                except (KeyError, IndexError, TypeError):
+                    mf = request.FILES.pop("media_file", None)
+                if mf:
+                    image_url = upload_image_to_cloudinary(mf)
+
             # ── Handle media (file uploads, base64 data URIs, URLs) ────────
             all_images, _ = _collect_request_images(request)
+            if image_url:
+                all_images.append(image_url)
 
             # ── Duplicate post prevention (idempotency check) ─────────────
             import hashlib
@@ -330,6 +370,13 @@ class CreatePost(APIView):
                         raw_target_accounts = json.loads(raw_target_accounts)
                     except (ValueError, TypeError):
                         raw_target_accounts = []
+
+            if video_url:
+                data["video"] = video_url
+                data.pop("video_file", None)
+            if image_url:
+                data["image"] = image_url
+                data.pop("media_file", None)
 
             data["images"] = all_images
             data["target_accounts"] = raw_target_accounts
@@ -410,11 +457,41 @@ class CreatePost(APIView):
             # Normalize media (file uploads, base64 data URIs, URLs) the same way
             # as create. Only override `images` when the request actually carried
             # media, so a text-only edit doesn't wipe existing images.
+            video_url = None
+            image_url = None
+            if "video_file" in request.FILES:
+                try:
+                    vf = request.FILES.pop("video_file")[0]
+                except (KeyError, IndexError, TypeError):
+                    vf = request.FILES.pop("video_file", None)
+                if vf:
+                    video_url = upload_video_to_cloudinary(vf)
+
+            if "media_file" in request.FILES:
+                try:
+                    mf = request.FILES.pop("media_file")[0]
+                except (KeyError, IndexError, TypeError):
+                    mf = request.FILES.pop("media_file", None)
+                if mf:
+                    image_url = upload_image_to_cloudinary(mf)
+
             if hasattr(request.data, 'dict'):
                 data = request.data.dict()
             else:
                 data = dict(request.data)
+
             all_images, media_provided = _collect_request_images(request)
+            if image_url:
+                all_images.append(image_url)
+                media_provided = True
+
+            if video_url:
+                data["video"] = video_url
+                data.pop("video_file", None)
+            if image_url:
+                data["image"] = image_url
+                data.pop("media_file", None)
+
             if media_provided:
                 data["images"] = all_images
             else:
