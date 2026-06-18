@@ -391,6 +391,11 @@ class CreatePost(APIView):
 
             if add_to_queue and not scheduled_time and not is_draft:
                 scheduled_time = _get_next_queue_slot(request.user)
+                if not scheduled_time:
+                    return Response(
+                        {"error": "No posting schedule slots configured. Please add a time slot in your scheduling settings first."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
                 serializer.validated_data["scheduled_time"] = scheduled_time
 
             if is_draft:
@@ -398,7 +403,7 @@ class CreatePost(APIView):
             else:
                 initial_status = Post.Status.SCHEDULED if scheduled_time else Post.Status.PENDING
 
-            post = serializer.save(user=request.user, status=initial_status)
+            post = serializer.save(user=request.user, status=initial_status, scheduled_time=scheduled_time)
             # Save idempotency key to prevent duplicate submissions
             if idempotency_key:
                 Post.objects.filter(id=post.id).update(idempotency_key=idempotency_key)
@@ -573,7 +578,7 @@ class CreatePost(APIView):
             errors = {}
             updated_results = (post.platform_results or {}).copy()
 
-            if not force and post.status in [Post.Status.PUBLISHED, Post.Status.PARTIAL]:
+            if post.status in [Post.Status.PUBLISHED, Post.Status.PARTIAL]:
                 for account_key, result in (post.platform_results or {}).items():
                     if result.get("success") and not result.get("deleted"):
                         post_urn = result.get("post_urn") or result.get("post_id")
@@ -1518,7 +1523,7 @@ class BulkDeletePostsView(APIView):
                 post_errors = {}
                 updated_results = (post.platform_results or {}).copy()
 
-                if not force and post.status in [Post.Status.PUBLISHED, Post.Status.PARTIAL]:
+                if post.status in [Post.Status.PUBLISHED, Post.Status.PARTIAL]:
                     for account_key, result in (post.platform_results or {}).items():
                         if result.get("success") and not result.get("deleted"):
                             post_urn = result.get("post_urn") or result.get("post_id")
