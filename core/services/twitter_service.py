@@ -163,10 +163,18 @@ class TwitterService(BaseSocialService):
             auth=auth,
             timeout=settings.SOCIAL_REQUEST_TIMEOUT,
         )
+        if response.status_code == 404:
+            logger.info("Twitter post already deleted or not found: id=%s", tweet_id)
+            return True
         if not response.ok:
             try:
                 error = response.json()
                 msg = error.get("detail") or str(error)
+                msg_lower = msg.lower()
+                # If message contains not found, treat it as deleted successfully
+                if "not found" in msg_lower or "cannot find" in msg_lower or "notfound" in msg_lower:
+                    logger.info("Twitter post already deleted or not found: id=%s", tweet_id)
+                    return True
             except Exception:
                 msg = response.text[:300]
             raise SocialPlatformError(f"Twitter delete failed: {msg}")

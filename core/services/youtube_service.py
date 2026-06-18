@@ -205,12 +205,22 @@ class YouTubeService(BaseSocialService):
             headers=self._auth_headers(),
             timeout=settings.SOCIAL_REQUEST_TIMEOUT,
         )
-        if response.status_code == 204:
+        if response.status_code in (204, 200):
             logger.info("YouTube video deleted: id=%s", video_id)
             return True
+        if response.status_code == 404:
+            logger.info("YouTube video already deleted/not found: id=%s", video_id)
+            return True
         if not response.ok:
+            try:
+                error_msg = response.json().get("error", {}).get("message", "")
+                if "not found" in error_msg.lower() or "notfound" in error_msg.lower():
+                    logger.info("YouTube video already deleted/not found: id=%s", video_id)
+                    return True
+            except Exception:
+                error_msg = response.text[:300]
             raise SocialPlatformError(
-                f"YouTube delete failed: {response.text[:300]}"
+                f"YouTube delete failed: {error_msg}"
             )
         return True
 

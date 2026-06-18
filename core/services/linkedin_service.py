@@ -362,7 +362,15 @@ class LinkedInService(BaseSocialService):
 
     def delete_post(self, post_urn):
         encoded_urn = requests.utils.quote(post_urn, safe="")
-        url = f"https://api.linkedin.com/rest/posts/{encoded_urn}"
+        if post_urn.startswith("urn:li:ugcPost:"):
+            url = f"https://api.linkedin.com/v2/ugcPosts/{encoded_urn}"
+            headers = self._auth_headers(use_rest_v3=False)
+        elif post_urn.startswith("urn:li:share:"):
+            url = f"https://api.linkedin.com/v2/shares/{encoded_urn}"
+            headers = self._auth_headers(use_rest_v3=False)
+        else:
+            url = f"https://api.linkedin.com/rest/posts/{encoded_urn}"
+            headers = self._auth_headers(use_rest_v3=True)
+
         logger.info("Deleting LinkedIn post: urn=%s url=%s", post_urn, url)
-        headers = self._auth_headers()
         return self.delete_request(url, headers=headers)

@@ -109,7 +109,14 @@ class InstagramService(BaseSocialService):
                                timeout=settings.SOCIAL_REQUEST_TIMEOUT)
         if not resp.ok:
             try:
-                error = resp.json().get("error", {}).get("message")
+                error_data = resp.json().get("error", {})
+                error = error_data.get("message", "")
+                code = error_data.get("code")
+                error_lower = error.lower()
+                # Code 100/21/33 or specific text indicates post doesn't exist or is already deleted
+                if code in (100, 21, 33) or "does not exist" in error_lower or "not found" in error_lower or "unsupported delete request" in error_lower:
+                    logger.info("Instagram post already deleted or not found: id=%s", endpoint)
+                    return {"success": True, "already_deleted": True}
             except Exception:
                 error = resp.text[:500]
             raise SocialPlatformError(f"Instagram Delete Error: {error}")

@@ -81,7 +81,14 @@ class BaseSocialService:
         return {}
 
     def delete_request(self, url, *, headers=None):
-        self._request("DELETE", url, headers=headers)
+        try:
+            self._request("DELETE", url, headers=headers)
+        except SocialPlatformError as exc:
+            exc_str = str(exc).lower()
+            if "not_found" in exc_str or "not found" in exc_str or "404" in exc_str:
+                logger.info("Post already deleted or not found on platform: %s", url)
+                return True
+            raise
         return True
 
     def get_request(self, url, *, headers=None):

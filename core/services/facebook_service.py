@@ -63,6 +63,11 @@ class FacebookService(BaseSocialService):
                 error = resp.json().get("error", {})
                 msg = error.get("message") or error.get("error_user_msg") or resp.text[:500]
                 code = error.get("code", "")
+                msg_lower = msg.lower()
+                # Code 100/21/33 or specific text indicates post doesn't exist or is already deleted
+                if code in (100, 21, 33) or "does not exist" in msg_lower or "not found" in msg_lower or "unsupported delete request" in msg_lower:
+                    logger.info("Facebook post already deleted or not found: id=%s", endpoint)
+                    return {"success": True, "already_deleted": True}
                 full_msg = f"Facebook Delete Error: {msg}"
                 if code:
                     full_msg += f" (code: {code})"

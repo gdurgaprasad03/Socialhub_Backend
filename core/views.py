@@ -567,11 +567,16 @@ class CreatePost(APIView):
             except Post.DoesNotExist:
                 return Response({"error": "Post not found"}, status=status.HTTP_404_NOT_FOUND)
 
-            if post.status in [Post.Status.PUBLISHED, Post.Status.PARTIAL]:
+            # Check if we should force local delete bypass
+            force = request.query_params.get("force", "false").lower() == "true"
+
+            errors = {}
+            updated_results = (post.platform_results or {}).copy()
+
+            if not force and post.status in [Post.Status.PUBLISHED, Post.Status.PARTIAL]:
                 for account_key, result in (post.platform_results or {}).items():
                     if result.get("success") and not result.get("deleted"):
-                        post_urn = result.get(
-                            "post_urn") or result.get("post_id")
+                        post_urn = result.get("post_urn") or result.get("post_id")
                         if post_urn:
                             try:
                                 account = SocialAccount.objects.get(
@@ -581,11 +586,41 @@ class CreatePost(APIView):
                                     account.platform, request.user, account=account)
                                 service.account = account
                                 service.delete_post(post_urn)
+                                
+                                if account_key not in updated_results:
+                                    updated_results[account_key] = result.copy()
+                                updated_results[account_key]["deleted"] = True
                             except Exception as exc:
-                                logger.warning(
-                                    "Optional remote delete failed: post_id=%s account=%s error=%s",
+                                logger.exception(
+                                    "Remote delete failed: post_id=%s account=%s error=%s",
                                     pk, account_key, exc
                                 )
+                                errors[account_key] = str(exc)
+
+                post.platform_results = updated_results
+                post.save(update_fields=["platform_results", "updated_at"])
+
+            # If there are any failed remote deletes, do NOT delete locally, unless force=true is passed
+            if errors and not force:
+                return Response(
+                    {
+                        "error": "Failed to delete post from some social media platforms. The post was not removed locally so you can retry. Use ?force=true to delete locally anyway.",
+                        "details": errors,
+                        "platform_results": updated_results
+                    },
+                    status=status.HTTP_502_BAD_GATEWAY
+                )
+
+            # Revoke pending Celery task if any
+            if post.celery_task_id and post.status in [
+                Post.Status.SCHEDULED, Post.Status.PENDING
+            ]:
+                try:
+                    from celery import current_app
+                    current_app.control.revoke(post.celery_task_id, terminate=False)
+                except Exception:
+                    pass
+
             post.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
         except Exception as exc:
@@ -1452,6 +1487,7 @@ class BulkDeletePostsView(APIView):
 
     def delete(self, request):
         post_ids = request.data.get("post_ids", [])
+        force = request.query_params.get("force", "false").lower() == "true"
         if not isinstance(post_ids, list) or not post_ids:
             return Response(
                 {"error": "post_ids must be a non-empty list of post IDs."},
@@ -1479,8 +1515,10 @@ class BulkDeletePostsView(APIView):
 
         for post in posts:
             try:
-                # Delete from platforms if published
-                if post.status in [Post.Status.PUBLISHED, Post.Status.PARTIAL]:
+                post_errors = {}
+                updated_results = (post.platform_results or {}).copy()
+
+                if not force and post.status in [Post.Status.PUBLISHED, Post.Status.PARTIAL]:
                     for account_key, result in (post.platform_results or {}).items():
                         if result.get("success") and not result.get("deleted"):
                             post_urn = result.get("post_urn") or result.get("post_id")
@@ -1493,24 +1531,38 @@ class BulkDeletePostsView(APIView):
                                         account.platform, request.user, account=account
                                     )
                                     service.delete_post(post_urn)
+                                    if account_key not in updated_results:
+                                        updated_results[account_key] = result.copy()
+                                    updated_results[account_key]["deleted"] = True
                                 except Exception as exc:
-                                    logger.warning(
-                                        "Bulk delete: platform delete failed for post_id=%s account=%s: %s",
-                                        post.id, account_key, exc
+                                    logger.exception(
+                                        "Bulk delete: platform delete failed for post_id=%s account=%s",
+                                        post.id, account_key
                                     )
+                                    post_errors[account_key] = str(exc)
 
-                # Revoke pending Celery task if any
-                if post.celery_task_id and post.status in [
-                    Post.Status.SCHEDULED, Post.Status.PENDING
-                ]:
-                    try:
-                        from celery import current_app
-                        current_app.control.revoke(post.celery_task_id, terminate=False)
-                    except Exception:
-                        pass
+                    post.platform_results = updated_results
+                    post.save(update_fields=["platform_results", "updated_at"])
 
-                post.delete()
-                deleted.append(post.id)
+                if post_errors and not force:
+                    failed.append({
+                        "id": post.id,
+                        "error": "Failed to delete from some platforms.",
+                        "details": post_errors
+                    })
+                else:
+                    # Revoke pending Celery task if any
+                    if post.celery_task_id and post.status in [
+                        Post.Status.SCHEDULED, Post.Status.PENDING
+                    ]:
+                        try:
+                            from celery import current_app
+                            current_app.control.revoke(post.celery_task_id, terminate=False)
+                        except Exception:
+                            pass
+
+                    post.delete()
+                    deleted.append(post.id)
             except Exception as exc:
                 logger.exception("Bulk delete failed for post_id=%s", post.id)
                 failed.append({"id": post.id, "error": str(exc)})
