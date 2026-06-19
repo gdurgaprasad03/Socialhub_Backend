@@ -215,11 +215,11 @@ class Post(models.Model):
         return site_url + url
 
     def get_platform_option(self, platform, key, default=None):
-        """Legacy helper — read per-platform options."""
+        
         return (self.platform_options or {}).get(platform, {}).get(key, default)
 
     def get_account_option(self, account_id, key, default=None):
-        """Read per-account options by account ID string."""
+        
         return (self.platform_options or {}).get(str(account_id), {}).get(key, default)
 
 
