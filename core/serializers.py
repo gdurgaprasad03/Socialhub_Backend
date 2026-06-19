@@ -42,9 +42,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 
 class LoginSerializer(serializers.Serializer):
-    # All login fields are plain CharFields (not EmailField) so a username typed
-    # into the "email" box isn't rejected by email-format validation. The login
-    # value can arrive in any of `identifier`, `email`, or `username`.
+    
     identifier = serializers.CharField(required=False, allow_blank=True, write_only=True)
     email = serializers.CharField(required=False, allow_blank=True)
     username = serializers.CharField(required=False, allow_blank=True)
@@ -61,8 +59,6 @@ class LoginSerializer(serializers.Serializer):
                 "Email or username and password are required"
             )
 
-        # Resolve the account by email or username (both case-insensitive),
-        # then authenticate using its real username.
         if "@" in username_or_email:
             user_obj = User.objects.filter(email__iexact=username_or_email).first()
         else:

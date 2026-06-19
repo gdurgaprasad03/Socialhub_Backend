@@ -77,10 +77,7 @@ class YouTubeService(BaseSocialService):
     # ── Video upload ──────────────────────────────────────────────────────
 
     def _upload_video_resumable(self, file_path, title, description, privacy="public"):
-        """
-        Upload a video file to YouTube using resumable upload.
-        Returns video ID.
-        """
+       
         file_size = os.path.getsize(file_path)
         ext = os.path.splitext(file_path)[1].lower()
         content_type_map = {
@@ -175,7 +172,6 @@ class YouTubeService(BaseSocialService):
         raise SocialPlatformError("YouTube upload finished without receiving video ID.")
 
     def _download_video_to_temp(self, video_url):
-        """Download a remote video to a temp file. Returns temp file path."""
         logger.info("Downloading video from URL for YouTube: %s", video_url)
         tmp_path = None
         try:
@@ -227,12 +223,7 @@ class YouTubeService(BaseSocialService):
     # ── Main entry point ─────────────────────────────────────────────────
 
     def create_post(self, post):
-        """
-        Upload a video to YouTube.
-        YouTube only supports video posts — image/text posts are not supported.
-        Privacy defaults to public. Can be overridden via platform_options:
-        {"youtube": {"privacy": "private"}} or {"youtube": {"privacy": "unlisted"}}
-        """
+        
         if not post.has_video:
             raise SocialPlatformError(
                 "YouTube only supports video posts. "

@@ -344,7 +344,7 @@ class LinkedInService(BaseSocialService):
                     }
                 }
         elif post.has_video:
-             # This should have been handled by the task but if called directly:
+    
              raise SocialPlatformError("Video posts should use publish_video_post")
 
         logger.info("Creating LinkedIn post — author=%s images=%d", author, len(asset_urns))

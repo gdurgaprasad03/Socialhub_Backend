@@ -1,7 +1,4 @@
-"""
-Additional CRUD views for platform-specific operations on published posts.
-Add these to your existing views.py and urls.py.
-"""
+
 import logging
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -21,11 +18,7 @@ READABLE_PLATFORMS = {"linkedin", "facebook", "instagram", "twitter", "youtube"}
 
 
 class GetPlatformPostView(APIView):
-    """
-    GET /api/posts/{pk}/account/{account_id}/read/
-    Fetch the live post data from the platform.
-    Useful to verify post was published and get current stats.
-    """
+  
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk, account_id):
@@ -87,19 +80,7 @@ class GetPlatformPostView(APIView):
 
 
 class UpdatePlatformPostView(APIView):
-    """
-    PATCH /api/posts/{pk}/account/{account_id}/update/
-    Update a published post on the platform.
-
-    Supported updates per platform:
-    - Facebook: message (text content)
-    - Instagram: caption
-    - YouTube: title, description, privacy
-
-    Not supported:
-    - LinkedIn: API does not support post updates
-    - Twitter: API does not support tweet updates
-    """
+    
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, pk, account_id):
@@ -205,12 +186,7 @@ class UpdatePlatformPostView(APIView):
 
 
 class AutoSaveDraftView(APIView):
-    """
-    POST /api/posts/autosave/
-    Auto-save current form state as a draft.
-    Called by frontend when user navigates away or closes browser.
-    Updates existing draft if draft_id provided, otherwise creates new draft.
-    """
+   
     permission_classes = [IsAuthenticated]
 
     def post(self, request):

@@ -82,8 +82,7 @@ def _get_next_queue_slot(user):
         reference_time = now
 
     for _ in range(14):
-        # Convert to local time so day-of-week and time comparisons align with
-        # the schedule.time values the user entered in their local timezone (IST).
+        
         local_ref = timezone.localtime(reference_time)
         ref_day = local_ref.weekday()
         ref_time = local_ref.time()
@@ -135,8 +134,6 @@ _MIME_EXT = {
 
 
 def _save_base64_media(data_uri):
-    """Decode a `data:<mime>;base64,<payload>` URI, upload to Cloudinary, and
-    return its secure URL. Returns None if the value isn't a decodable data URI."""
     if not isinstance(data_uri, str) or not data_uri.startswith("data:"):
         return None
     try:
@@ -164,11 +161,7 @@ def _save_base64_media(data_uri):
 
 
 def _normalize_image_inputs(values):
-    """Turn a mixed list of image inputs into a list of stored/usable URLs.
-
-    Each value may be a base64 data URI (decoded + stored), an http(s)/`/media`
-    URL (kept as-is), or junk (skipped). `blob:` URLs only exist in the browser
-    and cannot be resolved server-side, so they're dropped with a warning."""
+   
     urls = []
     for value in values:
         if not isinstance(value, str) or not value.strip():
@@ -187,14 +180,7 @@ def _normalize_image_inputs(values):
 
 
 def _collect_request_images(request):
-    """Gather every image the client sent into a clean list of stored URLs.
-
-    Looks in three places the frontend uses: real file uploads (request.FILES),
-    string values appended under "media_files" (base64/URLs as form fields), and
-    the JSON "images" field. Base64 data URIs are decoded and stored; URLs pass
-    through. Returns (urls, media_provided) — media_provided is False only when
-    the request carried no image input at all, so a partial PUT can leave the
-    existing images untouched instead of clearing them."""
+    
     urls = []
     provided = False
 
@@ -205,11 +191,7 @@ def _collect_request_images(request):
                     len(uploaded_files))
         urls += _save_uploaded_files(uploaded_files)
 
-    # The frontend also appends non-file image values (base64 data URIs / URLs)
-    # under "media_files" as plain form fields. Read them from request.data
-    # (DRF's already-parsed payload) rather than request.POST, which can raise
-    # on a multipart request whose stream DRF has already consumed. request.data
-    # merges form fields and files, so filter out the file objects we handled.
+    
     media_values = (
         request.data.getlist("media_files")
         if hasattr(request.data, "getlist") else []
@@ -277,12 +259,7 @@ class CreatePost(APIView):
                         status=status.HTTP_403_FORBIDDEN
                     )
 
-                # Check Expiration.
-                # A PAID active plan is renewed externally by Razorpay (the
-                # subscription.charged webhook pushes current_period_end forward),
-                # so a lagging date shouldn't lock out a valid paid subscriber.
-                # Free trials and non-active plans (cancelled grace period,
-                # past-due, etc.) are still gated by current_period_end.
+                
                 now = timezone.now()
                 is_paid_active = (
                     sub.status == UserSubscription.Status.ACTIVE
@@ -339,8 +316,7 @@ class CreatePost(APIView):
                     raw_ta = _json.loads(raw_ta)
                 except Exception:
                     raw_ta = []
-            # Guard: if the frontend sent a bare integer (or any non-list scalar)
-            # wrap it so sorted() doesn't raise 'int object is not iterable'.
+            
             if not isinstance(raw_ta, (list, tuple)):
                 raw_ta = [raw_ta] if raw_ta is not None else []
             _idem_src = f"{request.user.id}:{request.data.get('content', '')}:{sorted(raw_ta)}:{request.data.get('scheduled_time', '')}"
@@ -430,10 +406,7 @@ class CreatePost(APIView):
                     post.celery_task_id = task_result.id
                     post.save(update_fields=["celery_task_id", "updated_at"])
                 except Exception as broker_exc:
-                    # Celery broker (Redis) is temporarily unavailable.
-                    # The post is safely saved in the database as PENDING.
-                    # It will be re-queued automatically once the worker is back,
-                    # or manually via: python manage.py requeue_pending_posts
+                  
                     logger.error(
                         "Celery broker unavailable — post id=%d saved as PENDING "
                         "and will be retried: %s", post.id, broker_exc
@@ -466,9 +439,6 @@ class CreatePost(APIView):
             except Post.DoesNotExist:
                 return Response({"error": "Post not found"}, status=status.HTTP_404_NOT_FOUND)
 
-            # Normalize media (file uploads, base64 data URIs, URLs) the same way
-            # as create. Only override `images` when the request actually carried
-            # media, so a text-only edit doesn't wipe existing images.
             video_url = None
             image_url = None
             if "video_file" in request.FILES:
@@ -590,9 +560,7 @@ class CreatePost(APIView):
                     if result.get("success") and not result.get("deleted"):
                         post_urn = result.get("post_urn") or result.get("post_id")
                         if not post_urn:
-                            # Platform ID was never stored — cannot delete remotely.
-                            # Treat as an error so the local record is preserved and
-                            # the user sees which account couldn't be cleaned up.
+                        
                             errors[account_key] = (
                                 "No platform post ID recorded for this account; "
                                 "cannot delete remotely. Use ?force=true to remove locally."
@@ -1224,12 +1192,7 @@ class LogoutView(APIView):
 # ──────────────────────────────────────────────
 
 class SocialAccountHealthView(APIView):
-    """
-    GET /api/social-accounts/health/
-    Returns health status of all connected social accounts for the user.
-    Token status: 'active', 'expiring_soon' (within 7 days), 'expired', 'no_expiry'
-    Also shows last post time per account from platform_results.
-    """
+   
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -1304,12 +1267,7 @@ class SocialAccountHealthView(APIView):
 # ──────────────────────────────────────────────
 
 class PostStatusView(APIView):
-    """
-    GET /api/posts/<pk>/status/
-    Returns the current status of a post for real-time polling.
-    Frontend can poll every 3-5 seconds while post is in PROCESSING state.
-    Returns minimal payload for efficiency.
-    """
+    
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
@@ -1333,11 +1291,7 @@ class PostStatusView(APIView):
 # ──────────────────────────────────────────────
 
 class PostAnalyticsView(APIView):
-    """
-    GET /api/posts/<pk>/analytics/
-    Fetches live engagement analytics from each platform for a published post.
-    Returns metrics keyed by social account ID.
-    """
+    
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
@@ -1511,12 +1465,7 @@ class PostAnalyticsView(APIView):
 # ──────────────────────────────────────────────
 
 class BulkDeletePostsView(APIView):
-    """
-    DELETE /api/posts/bulk-delete/
-    Body: {"post_ids": [1, 2, 3]}
-    Deletes multiple posts. For published posts, also deletes from platforms.
-    Returns summary of deleted and failed post IDs.
-    """
+   
     permission_classes = [IsAuthenticated]
 
     def delete(self, request):
@@ -1613,13 +1562,7 @@ class BulkDeletePostsView(APIView):
 # ──────────────────────────────────────────────
 
 class YouTubeChannelSelectView(APIView):
-    """
-    POST /api/social-connect/youtube/select-channel/
-    Body: {"social_account_id": 5, "channel_id": "UCxxxxx", "channel_title": "My Channel"}
-    Updates a YouTube social account to use a specific channel from the list
-    stored in metadata["available_channels"]. This allows users with multiple
-    YouTube channels on one Google account to pick which channel to use.
-    """
+    
     permission_classes = [IsAuthenticated]
 
     def post(self, request):

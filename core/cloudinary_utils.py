@@ -10,14 +10,11 @@ logger = logging.getLogger(__name__)
 
 
 def get_transformed_url(url, transformation="c_pad,ar_1:1,b_auto"):
-    """
-    Injects Cloudinary transformation parameters into a Cloudinary URL.
-    If the URL is not a Cloudinary URL, it returns it as-is.
-    """
+
     if not url or "res.cloudinary.com" not in url:
         return url
 
-    # Insert transformation after /upload/
+
     if "/upload/" in url:
         parts = url.split("/upload/")
         return f"{parts[0]}/upload/{transformation}/{parts[1]}"
@@ -25,20 +22,7 @@ def get_transformed_url(url, transformation="c_pad,ar_1:1,b_auto"):
 
 
 def upload_image_to_cloudinary(source, filename="image"):
-    """
-    Upload an image to Cloudinary from a local file path, URL, or file object.
-    Returns the secure public URL.
     
-    Args:
-        source: Can be:
-            - str: local file path
-            - str: http/https URL
-            - file-like object: Django InMemoryUploadedFile or similar
-        filename: used as the public_id prefix
-    
-    Returns:
-        str: secure HTTPS URL of the uploaded image
-    """
     try:
         if hasattr(source, "read"):
             # File object (Django uploaded file)
@@ -90,16 +74,7 @@ def upload_image_to_cloudinary(source, filename="image"):
 
 
 def upload_video_to_cloudinary(source):
-    """
-    Upload a video to Cloudinary from a local file path or URL.
-    Returns the secure public URL.
-    
-    Args:
-        source: local file path string or http/https URL string
-    
-    Returns:
-        str: secure HTTPS URL of the uploaded video
-    """
+  
     try:
         if hasattr(source, "read"):
             source.seek(0)

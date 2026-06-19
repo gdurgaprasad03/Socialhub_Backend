@@ -79,13 +79,7 @@ def process_post(self, post_id):
 
 
 def _get_post_for_account(post, account):
-    """Return a shallow-copied post with account-specific overrides applied.
-
-    We work on an isolated copy so mutations never bleed across accounts
-    even if an exception fires mid-loop before the next iteration can
-    restore the shared object.
-    """
-    # Shallow-copy the post object; replace only the fields we may mutate.
+ 
     post_copy = copy.copy(post)
     post_copy.platform_options = dict(post.platform_options or {})
 
@@ -421,17 +415,7 @@ def poll_video_status(self, post_id, account_key, platform, video_urn):
 
 @shared_task(name="core.tasks.recover_stuck_posts")
 def recover_stuck_posts():
-    """
-    Periodic task (runs every 5 min via Celery Beat) that automatically
-    recovers posts that should have been processed but weren't.
-
-    Covers three cases:
-      1. PENDING/PROCESSING posts with no results older than 5 min
-         (worker was down or crashed after the task was queued).
-      2. SCHEDULED posts whose scheduled_time has already passed but whose
-         Celery ETA task was never executed (worker was down at that moment).
-         These stay stuck as SCHEDULED forever without this check.
-    """
+ 
     from datetime import timedelta
     now = timezone.now()
     cutoff = now - timedelta(minutes=5)
@@ -492,13 +476,7 @@ def recover_stuck_posts():
 
 @shared_task(name="core.tasks.refresh_expiring_tokens")
 def refresh_expiring_tokens():
-    """
-    Periodic task (runs every 6 hours via Celery Beat).
-    Proactively refreshes OAuth tokens that are expiring within the next 3 days.
-
-    This prevents silent post failures caused by expired access tokens.
-    Platforms with non-expiring tokens (Facebook Page tokens, Twitter OAuth1) are skipped.
-    """
+   
     from datetime import timedelta
 
     now = timezone.now()
@@ -549,14 +527,11 @@ def refresh_expiring_tokens():
 
 @shared_task(name="core.tasks.cleanup_expired_oauth_states")
 def cleanup_expired_oauth_states():
-    """
-    Periodic task (runs daily) to delete expired OAuthState records.
-    Keeps the database clean and prevents runaway growth.
-    """
+  
     from .models import OAuthState
     from datetime import timedelta
 
-    cutoff = timezone.now() - timedelta(hours=1)  # 1 hour past expiry
+    cutoff = timezone.now() - timedelta(hours=1)  
     deleted_count, _ = OAuthState.objects.filter(expires_at__lte=cutoff).delete()
     logger.info("cleanup_expired_oauth_states: deleted %d expired record(s)", deleted_count)
     return {"deleted": deleted_count}

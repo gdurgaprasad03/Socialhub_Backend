@@ -84,11 +84,7 @@ class FacebookService(BaseSocialService):
     # ── Image upload helpers ──────────────────────────────────────────────
 
     def _upload_photo_unpublished(self, image_source):
-        """
-        Upload a single photo unpublished (for use in multi-photo posts).
-        image_source: URL string or local path string.
-        Returns photo ID.
-        """
+       
         if self._is_local_path(image_source):
             abs_path = self._resolve_local_path(image_source)
             if not os.path.exists(abs_path):
@@ -115,7 +111,7 @@ class FacebookService(BaseSocialService):
         return photo_id
 
     def _upload_single_photo_published(self, image_source, caption=""):
-        """Publish a single photo post directly. Returns post ID."""
+    
         if self._is_local_path(image_source):
             abs_path = self._resolve_local_path(image_source)
             if not os.path.exists(abs_path):
@@ -184,10 +180,7 @@ class FacebookService(BaseSocialService):
     # ── Main entry point ─────────────────────────────────────────────────
 
     def create_post(self, post):
-        """
-        Create a Facebook Page post.
-        Handles: text only, single image, multiple images, video.
-        """
+       
         all_images = post.all_images  # uses the property from Post model
         has_video = post.has_video
 

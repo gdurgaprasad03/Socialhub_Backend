@@ -16,9 +16,6 @@ class TwitterService(BaseSocialService):
 
     def __init__(self, user, account=None):
         super().__init__(user, account=account)
-        # NOTE: Do NOT cache access_token here. Always read from
-        # self.account.access_token so that any in-flight token refresh
-        # (performed by ensure_active_token) is automatically picked up.
 
     def _auth_headers(self):
         return {
@@ -62,10 +59,7 @@ class TwitterService(BaseSocialService):
     # ── Media upload ──────────────────────────────────────────────────────
 
     def _upload_media(self, image_source):
-        """
-        Upload an image to Twitter media upload endpoint.
-        Returns media_id string.
-        """
+        
         auth = self._get_oauth1_auth()
         if not auth:
             raise SocialPlatformError(
@@ -109,10 +103,7 @@ class TwitterService(BaseSocialService):
     # ── Tweet creation ────────────────────────────────────────────────────
 
     def _post_tweet(self, text, media_ids=None):
-        """
-        Post a tweet via Twitter API v2 using OAuth 1.0a User Context.
-        Returns tweet ID.
-        """
+       
         auth = self._get_oauth1_auth()
         payload = {"text": text or ""}
 
@@ -185,13 +176,7 @@ class TwitterService(BaseSocialService):
     # ── Main entry point ─────────────────────────────────────────────────
 
     def create_post(self, post):
-        """
-        Post to Twitter.
-        - Text only: posts tweet with content
-        - With images: uploads images first, attaches to tweet
-        Twitter allows max 4 images per tweet.
-        Video posts are not supported in this implementation.
-        """
+       
         content = post.content or ""
 
         # Enforce Twitter character limit
@@ -227,6 +212,5 @@ class TwitterService(BaseSocialService):
         return {"post_id": tweet_id, "post_urn": tweet_id, "url": tweet_url}
 
     def delete_post(self, tweet_id):
-        """Delete a tweet by its ID."""
         logger.info("Deleting tweet: id=%s", tweet_id)
         return self._delete_tweet(tweet_id)

@@ -26,9 +26,7 @@ class InstagramService(BaseSocialService):
 
     def __init__(self, user, account=None):
         super().__init__(user, account=account)
-        # Accounts connected via direct "Instagram Login" use the Instagram Graph
-        # host with an IG user token; Facebook-Page-linked accounts use the
-        # Facebook Graph host with a Page token. Same endpoints/params otherwise.
+        
         if (self.account.metadata or {}).get("login_type") == "instagram":
             self.base_url = f"https://graph.instagram.com/{GRAPH_VERSION}"
         else:
@@ -39,11 +37,7 @@ class InstagramService(BaseSocialService):
     # ── Token refresh ─────────────────────────────────────────────────────
 
     def refresh_access_token(self):
-        """Refresh a direct Instagram-Login token (long-lived, 60-day, refreshable).
-
-        Facebook-Page-linked accounts use non-expiring Page tokens, so there is
-        nothing to refresh for them — fall back to the base behaviour.
-        """
+    
         from django.utils import timezone
         from datetime import timedelta
         from .oauth import refresh_instagram_login_token
@@ -146,9 +140,7 @@ class InstagramService(BaseSocialService):
         return os.path.join(settings.MEDIA_ROOT, relative)
 
     def _ensure_public_image_url(self, url, post_type=POST_TYPE_FEED):
-        """
-        Ensure image URL is publicly accessible and has a valid aspect ratio for Instagram.
-        """
+       
         if not url:
             raise SocialPlatformError("No image URL provided.")
 
@@ -158,8 +150,7 @@ class InstagramService(BaseSocialService):
             logger.info("Uploading local image to Cloudinary: %s", abs_path)
             public_url = upload_image_to_cloudinary(abs_path)
         elif "res.cloudinary.com" not in url:
-            # For non-Cloudinary remote URLs, we upload them to Cloudinary
-            # so we can apply aspect ratio transformations.
+           
             logger.info("Uploading remote image to Cloudinary for transformation: %s", url)
             public_url = upload_image_to_cloudinary(url)
 
@@ -174,9 +165,7 @@ class InstagramService(BaseSocialService):
         return transformed_url
 
     def _ensure_public_video_url(self, url, post_type=POST_TYPE_REEL):
-        """
-        Ensure video URL is publicly accessible and has a valid aspect ratio (9:16 for Reels/Stories).
-        """
+      
         if not url:
             raise SocialPlatformError("No video URL provided.")
 
@@ -289,11 +278,7 @@ class InstagramService(BaseSocialService):
     # ── Video upload (async entry point from tasks) ───────────────────────
 
     def upload_video(self, post):
-        """
-        Called by tasks._process_video_post.
-        Handles uploaded files, local paths, and public URLs.
-        Local files are uploaded to Cloudinary automatically.
-        """
+       
         post_type = self._get_post_type(post)
         video_url = None
 

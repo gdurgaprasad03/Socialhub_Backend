@@ -28,14 +28,13 @@ def build_youtube_auth_url(redirect_uri, state):
             "scope": " ".join(YOUTUBE_DEFAULT_SCOPES),
             "state": state,
             "access_type": "offline",  
-            "prompt": "consent",         # force consent screen to always get refresh token
+            "prompt": "consent",         
         }
     )
     return f"{YOUTUBE_AUTH_URL}?{query}"
 
 
 def exchange_youtube_code(code, redirect_uri):
-    """Exchange authorization code for YouTube access + refresh tokens."""
     if not getattr(settings, "YOUTUBE_CLIENT_ID", "") or not getattr(settings, "YOUTUBE_CLIENT_SECRET", ""):
         raise OAuthConfigurationError("YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET are not configured")
 

@@ -14,11 +14,7 @@ GRAPH_VERSION = getattr(settings, "META_GRAPH_API_VERSION", "v23.0")
 # ── LinkedIn ──────────────────────────────────────────────────────────────
 
 def linkedin_get_post(post_urn, access_token):
-    """
-    Get a LinkedIn post by URN.
-    Returns post data or raises exception.
-    LinkedIn does NOT support updating posts via API.
-    """
+   
     encoded_urn = requests.utils.quote(post_urn, safe="")
     url = f"https://api.linkedin.com/rest/posts/{encoded_urn}"
     headers = {
@@ -51,10 +47,7 @@ def facebook_get_post(post_id, access_token):
 
 
 def facebook_update_post(post_id, access_token, message):
-    """
-    Update a Facebook post message.
-    Only the message (text) can be updated. Images/videos cannot be changed.
-    """
+  
     url = f"https://graph.facebook.com/{GRAPH_VERSION}/{post_id}"
     response = requests.post(
         url,
@@ -85,10 +78,7 @@ def instagram_get_post(media_id, access_token):
 
 
 def instagram_update_post(media_id, access_token, caption):
-    """
-    Update an Instagram post caption.
-    Only the caption can be updated. Media cannot be changed.
-    """
+    
     url = f"https://graph.facebook.com/{GRAPH_VERSION}/{media_id}"
     response = requests.post(
         url,
@@ -103,10 +93,7 @@ def instagram_update_post(media_id, access_token, caption):
 # ── Twitter ───────────────────────────────────────────────────────────────
 
 def twitter_get_tweet(tweet_id, access_token):
-    """
-    Get a tweet by ID.
-    Twitter does NOT support updating tweets via API.
-    """
+   
     url = f"https://api.twitter.com/2/tweets/{tweet_id}"
     response = requests.get(
         url,
@@ -122,7 +109,6 @@ def twitter_get_tweet(tweet_id, access_token):
 # ── YouTube ───────────────────────────────────────────────────────────────
 
 def youtube_get_video(video_id, access_token):
-    """Get a YouTube video by ID."""
     url = "https://www.googleapis.com/youtube/v3/videos"
     response = requests.get(
         url,
@@ -143,11 +129,7 @@ def youtube_get_video(video_id, access_token):
 
 
 def youtube_update_video(video_id, access_token, title=None, description=None, privacy=None):
-    """
-    Update a YouTube video's title, description, and/or privacy status.
-    At least one field must be provided.
-    """
-    # First get current video data to avoid overwriting existing fields
+   
     current = youtube_get_video(video_id, access_token)
     snippet = current.get("snippet", {})
     current_status = current.get("status", {})
@@ -199,11 +181,7 @@ def get_platform_post(platform, post_urn, access_token):
 
 
 def update_platform_post(platform, post_urn, access_token, **kwargs):
-    """
-    Dispatch update operation to correct platform.
-    kwargs: message/caption/title/description/privacy depending on platform.
-    Raises ValueError if platform doesn't support updates.
-    """
+   
     if platform == "linkedin":
         raise ValueError("LinkedIn does not support updating posts via API.")
     elif platform == "twitter":
