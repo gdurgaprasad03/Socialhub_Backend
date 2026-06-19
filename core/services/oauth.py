@@ -21,8 +21,8 @@ LINKEDIN_DEFAULT_SCOPES = [
     "profile",
     "email",
     "w_member_social",
-    "r_organization_social",
-    "w_organization_social",
+    # r_organization_social and w_organization_social require LinkedIn Community
+    # Management API approval. Add them back once your app is approved.
 ]
 
 META_DEFAULT_SCOPES = [
