@@ -195,30 +195,21 @@ class YouTubeService(BaseSocialService):
     def delete_post(self, video_id):
         """Delete a YouTube video by its ID."""
         logger.info("Deleting YouTube video: id=%s", video_id)
-        response = requests.delete(
-            f"{YOUTUBE_API_BASE}/videos",
-            params={"id": video_id},
-            headers=self._auth_headers(),
-            timeout=settings.SOCIAL_REQUEST_TIMEOUT,
-        )
-        if response.status_code in (204, 200):
+        try:
+            self._request(
+                "DELETE",
+                f"{YOUTUBE_API_BASE}/videos",
+                params={"id": video_id},
+                headers=self._auth_headers(),
+            )
             logger.info("YouTube video deleted: id=%s", video_id)
             return True
-        if response.status_code == 404:
-            logger.info("YouTube video already deleted/not found: id=%s", video_id)
-            return True
-        if not response.ok:
-            try:
-                error_msg = response.json().get("error", {}).get("message", "")
-                if "not found" in error_msg.lower() or "notfound" in error_msg.lower():
-                    logger.info("YouTube video already deleted/not found: id=%s", video_id)
-                    return True
-            except Exception:
-                error_msg = response.text[:300]
-            raise SocialPlatformError(
-                f"YouTube delete failed: {error_msg}"
-            )
-        return True
+        except SocialPlatformError as exc:
+            exc_str = str(exc).lower()
+            if "not found" in exc_str or "404" in exc_str or "notfound" in exc_str:
+                logger.info("YouTube video already deleted/not found: id=%s", video_id)
+                return True
+            raise
 
     # ── Main entry point ─────────────────────────────────────────────────
 

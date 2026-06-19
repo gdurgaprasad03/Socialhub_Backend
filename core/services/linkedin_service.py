@@ -309,6 +309,10 @@ class LinkedInService(BaseSocialService):
 
         resp = self.post_json(url, payload=payload, headers=self._auth_headers())
         post_urn = resp["headers"].get("x-restli-id") or resp["headers"].get("X-RestLi-Id")
+        if not post_urn:
+            post_urn = resp["body"].get("id")
+        if not post_urn:
+            raise SocialPlatformError("LinkedIn did not return a post URN for video post.")
         logger.info("Video post published — post_urn=%s", post_urn)
         return {"post_urn": post_urn, "body": resp["body"]}
 

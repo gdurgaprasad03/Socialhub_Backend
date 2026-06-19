@@ -41,9 +41,7 @@ class SocialAccount(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        # Removed unique constraint on (user, platform)
-        # Now allows multiple accounts per platform per user
-        # Unique on (user, platform, account_id) to prevent duplicate connections
+        
         constraints = [
             models.UniqueConstraint(
                 fields=["user", "platform", "account_id"],
@@ -151,14 +149,13 @@ class Post(models.Model):
     )
 
     # ── Target accounts ───────────────────────────────────────────────────
-    # Stores list of SocialAccount IDs to post to
-    # e.g. [1, 3, 7] meaning post to accounts with those IDs
+   
     target_accounts = models.JSONField(
         default=list,
         help_text="List of SocialAccount IDs to post to"
     )
 
-    # Legacy field kept for backwards compatibility
+    
     platforms = models.JSONField(
         default=list,
         help_text="Legacy: list of platform names. Use target_accounts instead."

@@ -1513,7 +1513,16 @@ class BulkDeletePostsView(APIView):
                     for account_key, result in (post.platform_results or {}).items():
                         if result.get("success") and not result.get("deleted"):
                             post_urn = result.get("post_urn") or result.get("post_id")
-                            if post_urn:
+                            if not post_urn:
+                                post_errors[account_key] = (
+                                    "No platform post ID recorded for this account; "
+                                    "cannot delete remotely. Use ?force=true to remove locally."
+                                )
+                                logger.warning(
+                                    "Bulk delete: no post_urn/post_id stored: "
+                                    "post_id=%s account=%s", post.id, account_key
+                                )
+                            else:
                                 try:
                                     account = SocialAccount.objects.get(
                                         id=int(account_key), user=request.user
