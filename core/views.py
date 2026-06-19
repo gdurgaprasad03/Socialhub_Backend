@@ -551,8 +551,8 @@ class CreatePost(APIView):
             except Post.DoesNotExist:
                 return Response({"error": "Post not found"}, status=status.HTTP_404_NOT_FOUND)
 
-            # Check if we should force local delete bypass
-            force = request.query_params.get("force", "false").lower() == "true"
+            # Check if we should force local delete bypass (default to true so local delete is non-blocking)
+            force = request.query_params.get("force", "true").lower() == "true"
 
             errors = {}
             updated_results = (post.platform_results or {}).copy()
@@ -576,6 +576,13 @@ class CreatePost(APIView):
                             account = SocialAccount.objects.get(
                                 id=int(account_key), user=request.user
                             )
+                            if account.platform == "instagram":
+                                # Instagram Graph API does not support deleting media; skip and mark as deleted locally
+                                if account_key not in updated_results:
+                                    updated_results[account_key] = result.copy()
+                                updated_results[account_key]["deleted"] = True
+                                continue
+
                             service = get_service(
                                 account.platform, request.user, account=account)
                             service.account = account
@@ -657,6 +664,23 @@ class DeletePublishedPostView(APIView):
         try:
             account = SocialAccount.objects.get(
                 id=int(account_id), user=request.user)
+            if account.platform == "instagram":
+                # Instagram Graph API does not support deleting media; skip and mark as deleted locally
+                updated_results = post.platform_results.copy()
+                updated_results[account_key]["deleted"] = True
+                post.platform_results = updated_results
+                all_deleted = all(
+                    v.get("deleted") for v in updated_results.values() if v.get("success")
+                )
+                if all_deleted:
+                    post.delete()
+                    return Response({"message": "Post deleted from platform and removed locally. (Note: Instagram posts must be deleted manually on the Instagram app)"})
+                post.save(update_fields=["platform_results", "updated_at"])
+                return Response({
+                    "message": "Post marked as deleted for Instagram. (Note: Instagram posts must be deleted manually on the Instagram app)",
+                    "platform_results": updated_results
+                })
+
             service = get_service(
                 account.platform, request.user, account=account)
             service.account = account
@@ -1478,7 +1502,8 @@ class BulkDeletePostsView(APIView):
 
     def delete(self, request):
         post_ids = request.data.get("post_ids", [])
-        force = request.query_params.get("force", "false").lower() == "true"
+        # Check if we should force local delete bypass (default to true so local delete is non-blocking)
+        force = request.query_params.get("force", "true").lower() == "true"
         if not isinstance(post_ids, list) or not post_ids:
             return Response(
                 {"error": "post_ids must be a non-empty list of post IDs."},
@@ -1527,6 +1552,13 @@ class BulkDeletePostsView(APIView):
                                     account = SocialAccount.objects.get(
                                         id=int(account_key), user=request.user
                                     )
+                                    if account.platform == "instagram":
+                                        # Instagram Graph API does not support deleting media; skip and mark as deleted locally
+                                        if account_key not in updated_results:
+                                            updated_results[account_key] = result.copy()
+                                        updated_results[account_key]["deleted"] = True
+                                        continue
+
                                     service = get_service(
                                         account.platform, request.user, account=account
                                     )
