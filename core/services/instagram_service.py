@@ -148,11 +148,11 @@ class InstagramService(BaseSocialService):
         if self._is_local_path(url):
             abs_path = self._resolve_local_path(url)
             logger.info("Uploading local image to Cloudinary: %s", abs_path)
-            public_url = upload_image_to_cloudinary(abs_path)
+            public_url, _ = upload_image_to_cloudinary(abs_path)
         elif "res.cloudinary.com" not in url:
-           
+
             logger.info("Uploading remote image to Cloudinary for transformation: %s", url)
-            public_url = upload_image_to_cloudinary(url)
+            public_url, _ = upload_image_to_cloudinary(url)
 
         # Apply aspect ratio transformation
         if post_type == POST_TYPE_STORY:

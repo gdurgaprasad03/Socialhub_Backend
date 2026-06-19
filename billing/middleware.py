@@ -74,7 +74,7 @@ class PostLimitMiddleware:
                 free_plan = Plan.objects.filter(slug="free", is_active=True).first()
                 if not free_plan:
                     return None  # No plans configured yet — allow
-                limit = free_plan.posts_per_month
+                limit = free_plan.posts_limit
             else:
                 if subscription.status not in [
                     UserSubscription.Status.ACTIVE,
@@ -90,7 +90,7 @@ class PostLimitMiddleware:
                 if plan.is_unlimited:
                     return None  # Agency plan — no limit
 
-                limit = plan.posts_per_month
+                limit = plan.posts_limit
 
                 # Check account limit
                 from core.models import SocialAccount

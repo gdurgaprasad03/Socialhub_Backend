@@ -11,7 +11,7 @@ User = get_user_model()
 
 SUPPORTED_PLATFORMS = {choice[0] for choice in SocialAccount.Platform.choices}
 INSTAGRAM_POST_TYPES = {"feed", "reel", "story"}
-MAX_ACCOUNTS_PER_PLATFORM = 5
+MAX_ACCOUNTS_PER_PLATFORM = 10  # Safety cap per platform; plan total limit is enforced separately
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -95,13 +95,13 @@ class SocialAccountSerializer(serializers.ModelSerializer):
     class Meta:
         model = SocialAccount
         fields = [
-            "id", "user", "platform", "account_label", "display_name",
+            "id", "user", "platform", "account_type", "account_label", "display_name",
             "access_token", "refresh_token",
             "token_type", "account_id", "platform_username", "metadata",
             "expires_at", "is_expired", "created_at", "updated_at",
         ]
         read_only_fields = [
-            "id", "user", "token_type", "account_id", "platform_username",
+            "id", "user", "account_type", "token_type", "account_id", "platform_username",
             "metadata", "expires_at", "is_expired", "display_name",
             "created_at", "updated_at",
         ]
@@ -117,7 +117,7 @@ class SocialAccountSerializer(serializers.ModelSerializer):
         platform = data.get("platform", getattr(self.instance, "platform", None))
         account_id = data.get("account_id", getattr(self.instance, "account_id", None))
 
-        # Check max accounts per platform
+        # Check max accounts per platform (safety cap)
         existing_count = SocialAccount.objects.filter(
             user=user, platform=platform
         )
@@ -128,6 +128,25 @@ class SocialAccountSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 f"Maximum {MAX_ACCOUNTS_PER_PLATFORM} {platform} accounts allowed per user."
             )
+
+        # Check plan total account limit
+        try:
+            from billing.views import get_or_create_subscription
+            sub = get_or_create_subscription(user)
+            max_accounts = sub.plan.max_accounts
+            if max_accounts != -1:
+                total_count = SocialAccount.objects.filter(user=user)
+                if self.instance:
+                    total_count = total_count.exclude(pk=self.instance.pk)
+                if total_count.count() >= max_accounts:
+                    raise serializers.ValidationError(
+                        f"Your {sub.plan.name} plan allows {max_accounts} connected account(s). "
+                        "Please upgrade to connect more."
+                    )
+        except serializers.ValidationError:
+            raise
+        except Exception:
+            pass  # Fail open — plan check is also enforced at OAuth start
 
         # Check duplicate account_id for same platform
         if account_id:

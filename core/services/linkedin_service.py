@@ -85,10 +85,11 @@ class LinkedInService(BaseSocialService):
     def _author_urn(self):
         """Return the author/owner URN for LinkedIn REST API calls.
 
-        The ``sub`` from LinkedIn's OpenID Connect userinfo endpoint is the
-        member's person ID.  The correct URN for the /rest/posts and
-        /rest/images APIs is ``urn:li:person:{sub}``.
+        Personal accounts use urn:li:person:{sub}.
+        LinkedIn Pages (account_type='page') use urn:li:organization:{org_id}.
         """
+        if getattr(self.account, "account_type", "personal") == "page":
+            return f"urn:li:organization:{self.account.account_id}"
         return f"urn:li:person:{self.account.account_id}"
 
 

@@ -11,9 +11,21 @@ class SocialAccount(models.Model):
         TWITTER = "twitter", "Twitter"
         YOUTUBE = "youtube", "YouTube"
 
+    class AccountType(models.TextChoices):
+        PERSONAL = "personal", "Personal"
+        PAGE = "page", "Page / Business"
+        ORGANIZATION = "organization", "Organization"
+        CHANNEL = "channel", "Channel"
+
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="social_accounts")
     platform = models.CharField(max_length=20, choices=Platform.choices)
+    account_type = models.CharField(
+        max_length=20,
+        choices=AccountType.choices,
+        default=AccountType.PERSONAL,
+        help_text="Whether this is a personal profile, business page, organization, or channel",
+    )
     account_label = models.CharField(
         max_length=255, blank=True,
         help_text="Display name shown in UI (pulled from platform during OAuth)"
@@ -221,6 +233,38 @@ class Post(models.Model):
     def get_account_option(self, account_id, key, default=None):
         
         return (self.platform_options or {}).get(str(account_id), {}).get(key, default)
+
+
+class Design(models.Model):
+    """Stores designs created via Canva or Polotno Studio."""
+
+    class Source(models.TextChoices):
+        CANVA = "canva", "Canva"
+        POLOTNO = "polotno", "Polotno"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="designs"
+    )
+    title = models.CharField(max_length=255, blank=True)
+    source = models.CharField(max_length=20, choices=Source.choices)
+    image_url = models.URLField(max_length=1000)
+    cloudinary_public_id = models.CharField(max_length=255, blank=True)
+    canva_design_id = models.CharField(max_length=255, blank=True)
+    polotno_state = models.JSONField(
+        default=dict, blank=True,
+        help_text="Polotno editor JSON state — allows re-opening and editing the design",
+    )
+    width = models.IntegerField(default=0)
+    height = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["user", "source"])]
+
+    def __str__(self):
+        return f"{self.user_id} - {self.source} - {self.title or self.pk}"
 
 
 class PostingSchedule(models.Model):

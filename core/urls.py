@@ -15,7 +15,11 @@ from .views import (
     PostStatusView,
     PostAnalyticsView,
     BulkDeletePostsView,
+    LinkedInPageSelectView,
     YouTubeChannelSelectView,
+    DesignExportView,
+    DesignListView,
+    PolotnoStateSaveView,
 )
 from .services.platform_crud_views import (
     GetPlatformPostView,
@@ -42,6 +46,8 @@ urlpatterns = [
     # ── OAuth ─────────────────────────────────────────────────────────────
     path("social-connect/<str:platform>/start/", SocialConnectStartView.as_view(), name="social-connect-start"),
     path("social-connect/<str:platform>/callback/", SocialConnectCallbackView.as_view(), name="social-connect-callback"),
+    # LinkedIn Page selector (connect an org page using the personal account token)
+    path("social-connect/linkedin/select-page/", LinkedInPageSelectView.as_view(), name="linkedin-select-page"),
     # YouTube channel selector (for users with multiple channels on one Google account)
     path("social-connect/youtube/select-channel/", YouTubeChannelSelectView.as_view(), name="youtube-select-channel"),
 
@@ -72,4 +78,10 @@ urlpatterns = [
     # ── Scheduling ────────────────────────────────────────────────────────
     path("scheduling/", SchedulingView.as_view(), name="scheduling"),
     path("scheduling/<int:pk>/", SchedulingView.as_view(), name="scheduling-detail"),
+
+    # ── Design Studio (Canva + Polotno) ───────────────────────────────────
+    path("designs/export/", DesignExportView.as_view(), name="design-export"),
+    path("designs/", DesignListView.as_view(), name="design-list"),
+    path("designs/<int:pk>/", DesignListView.as_view(), name="design-detail"),
+    path("designs/<int:pk>/state/", PolotnoStateSaveView.as_view(), name="design-state"),
 ]

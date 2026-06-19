@@ -20,7 +20,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import OAuthState, Post, SocialAccount, PostingSchedule
+from .models import OAuthState, Post, SocialAccount, PostingSchedule, Design
 from .serializers import LoginSerializer, PostSerializer, RegisterSerializer, SocialAccountSerializer, PostingScheduleSerializer
 from .services.oauth import (
     OAuthConfigurationError,
@@ -33,6 +33,7 @@ from .services.oauth import (
     build_youtube_auth_url,
     build_social_account_data,
     build_instagram_login_account_data,
+    build_linkedin_page_account_data,
     exchange_linkedin_code,
     exchange_meta_code,
     exchange_instagram_login_code,
@@ -40,6 +41,7 @@ from .services.oauth import (
     exchange_twitter_oauth1_code,
     exchange_youtube_code,
     fetch_linkedin_profile,
+    fetch_linkedin_pages,
     fetch_meta_accounts,
     fetch_instagram_login_profile,
     fetch_twitter_profile,
@@ -117,7 +119,7 @@ def _save_uploaded_files(files):
             if is_video:
                 url = upload_video_to_cloudinary(f)
             else:
-                url = upload_image_to_cloudinary(f)
+                url, _ = upload_image_to_cloudinary(f)
             saved_urls.append(url)
         except Exception as e:
             logger.exception("Failed to upload file to Cloudinary: %s", f.name)
@@ -153,7 +155,7 @@ def _save_base64_media(data_uri):
         if is_video:
             url = upload_video_to_cloudinary(file_obj)
         else:
-            url = upload_image_to_cloudinary(file_obj)
+            url, _ = upload_image_to_cloudinary(file_obj)
         return url
     except Exception as exc:
         logger.exception("Failed to upload base64 media to Cloudinary: %s", exc)
@@ -300,7 +302,7 @@ class CreatePost(APIView):
                 except (KeyError, IndexError, TypeError):
                     mf = request.FILES.pop("media_file", None)
                 if mf:
-                    image_url = upload_image_to_cloudinary(mf)
+                    image_url, _ = upload_image_to_cloudinary(mf)
 
             # ── Handle media (file uploads, base64 data URIs, URLs) ────────
             all_images, _ = _collect_request_images(request)
@@ -455,7 +457,7 @@ class CreatePost(APIView):
                 except (KeyError, IndexError, TypeError):
                     mf = request.FILES.pop("media_file", None)
                 if mf:
-                    image_url = upload_image_to_cloudinary(mf)
+                    image_url, _ = upload_image_to_cloudinary(mf)
 
             if hasattr(request.data, 'dict'):
                 data = request.data.dict()
@@ -1008,6 +1010,12 @@ class SocialConnectCallbackView(APIView):
                 token_payload = exchange_linkedin_code(code, callback_uri)
                 profile_payload = fetch_linkedin_profile(
                     token_payload["access_token"])
+                try:
+                    pages = fetch_linkedin_pages(token_payload["access_token"])
+                except Exception as exc:
+                    logger.warning("Could not fetch LinkedIn pages for user=%s: %s", state_user.id, exc)
+                    pages = []
+                profile_payload["available_pages"] = pages
 
             elif platform in [SocialAccount.Platform.FACEBOOK, SocialAccount.Platform.INSTAGRAM]:
                 token_payload = exchange_meta_code(code, callback_uri)
@@ -1558,6 +1566,140 @@ class BulkDeletePostsView(APIView):
 
 
 # ──────────────────────────────────────────────
+# LINKEDIN PAGE SELECTOR
+# ──────────────────────────────────────────────
+
+class LinkedInPageSelectView(APIView):
+    """Connect a LinkedIn Page (organization) the user administers.
+
+    GET  — list pages available across all connected LinkedIn personal accounts.
+    POST — create/update a SocialAccount for the chosen page using the personal
+           account's token (LinkedIn uses the member token to post as org).
+
+    Request body (POST):
+        social_account_id: int   — the personal LinkedIn SocialAccount.id
+        page_id:           str   — the organization numeric ID
+        page_name:         str   — display name for the page
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        personal_accounts = SocialAccount.objects.filter(
+            user=request.user,
+            platform="linkedin",
+            account_type="personal",
+        )
+        pages = []
+        for acc in personal_accounts:
+            available = (acc.metadata or {}).get("available_pages", [])
+            for page in available:
+                pages.append({
+                    "social_account_id": acc.id,
+                    "personal_account_label": acc.account_label or acc.platform_username,
+                    "page_id": page.get("id"),
+                    "page_name": page.get("name"),
+                })
+        return Response({"pages": pages})
+
+    def post(self, request):
+        social_account_id = request.data.get("social_account_id")
+        page_id = str(request.data.get("page_id", "")).strip()
+        page_name = str(request.data.get("page_name", "")).strip()
+
+        if not social_account_id or not page_id:
+            return Response(
+                {"error": "social_account_id and page_id are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Enforce plan max_accounts limit (skip if page already exists for this user)
+        page_exists = SocialAccount.objects.filter(
+            user=request.user, platform="linkedin", account_id=page_id
+        ).exists()
+        if not page_exists:
+            try:
+                from billing.views import get_or_create_subscription
+                sub = get_or_create_subscription(request.user)
+                max_accounts = sub.plan.max_accounts
+                if max_accounts != -1:
+                    current_count = SocialAccount.objects.filter(user=request.user).count()
+                    if current_count >= max_accounts:
+                        return Response(
+                            {
+                                "error": (
+                                    f"You have reached your plan limit of {max_accounts} connected account(s). "
+                                    "Please upgrade your plan to connect more accounts."
+                                ),
+                                "limit_reached": True,
+                                "max_accounts": max_accounts,
+                                "current_accounts": current_count,
+                            },
+                            status=status.HTTP_403_FORBIDDEN,
+                        )
+            except Exception as exc:
+                logger.warning("Could not check account limit for user=%s: %s", request.user.id, exc)
+
+        try:
+            personal_account = SocialAccount.objects.get(
+                id=int(social_account_id),
+                user=request.user,
+                platform="linkedin",
+                account_type="personal",
+            )
+        except SocialAccount.DoesNotExist:
+            return Response(
+                {"error": "LinkedIn personal account not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        available = (personal_account.metadata or {}).get("available_pages", [])
+        if available:
+            valid_ids = [p.get("id") for p in available]
+            if page_id not in valid_ids:
+                return Response(
+                    {"error": f"Page ID '{page_id}' is not in your available LinkedIn pages."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not page_name:
+                page_name = next(
+                    (p.get("name", page_id) for p in available if p.get("id") == page_id),
+                    page_id,
+                )
+
+        token_payload = {
+            "access_token": personal_account.access_token,
+            "refresh_token": personal_account.refresh_token,
+            "token_type": personal_account.token_type,
+            "expires_in": None,
+        }
+        admin_profile = {
+            "sub": personal_account.account_id,
+            "name": personal_account.account_label or personal_account.platform_username,
+        }
+        page_data = {"id": page_id, "name": page_name}
+        account_data = build_linkedin_page_account_data(token_payload, page_data, admin_profile)
+        account_data["expires_at"] = personal_account.expires_at
+
+        page_account, created = SocialAccount.objects.update_or_create(
+            user=request.user,
+            platform="linkedin",
+            account_id=page_id,
+            defaults=account_data,
+        )
+
+        logger.info(
+            "LinkedIn Page connected: user=%s page_id=%s page_name=%s created=%s",
+            request.user.id, page_id, page_name, created,
+        )
+
+        return Response({
+            "message": f"LinkedIn Page '{page_name}' connected successfully.",
+            "account": SocialAccountSerializer(page_account).data,
+            "created": created,
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+# ──────────────────────────────────────────────
 # YOUTUBE CHANNEL SELECTOR
 # ──────────────────────────────────────────────
 
@@ -1616,4 +1758,156 @@ class YouTubeChannelSelectView(APIView):
             "message": f"YouTube channel '{channel_title or channel_id}' selected successfully.",
             "account": SocialAccountSerializer(account).data,
         })
+
+
+# ──────────────────────────────────────────────
+# DESIGN STUDIO (Canva + Polotno)
+# ──────────────────────────────────────────────
+
+class DesignExportView(APIView):
+    """Receive a finished design image from Polotno (base64) or Canva (URL),
+    upload it to Cloudinary, persist a Design record, and return the CDN URL
+    ready to attach to a post.
+
+    POST body:
+        source          str   "polotno" | "canva"
+        image_data      str   base64 data-URI  (Polotno)
+        image_url       str   Canva export URL (Canva)
+        canva_design_id str   Canva design ID  (optional, Canva)
+        polotno_state   obj   Full Polotno JSON state for re-editing (optional)
+        title           str   Human label
+        width           int   Canvas width in px
+        height          int   Canvas height in px
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        source = request.data.get("source", "polotno")
+        if source not in {Design.Source.CANVA, Design.Source.POLOTNO}:
+            return Response(
+                {"error": "source must be 'canva' or 'polotno'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        image_data = request.data.get("image_data", "")   # base64 from Polotno
+        image_url = request.data.get("image_url", "")     # export URL from Canva
+        title = str(request.data.get("title", "")).strip()
+        canva_design_id = str(request.data.get("canva_design_id", "")).strip()
+        polotno_state = request.data.get("polotno_state", {})
+        width = int(request.data.get("width", 0) or 0)
+        height = int(request.data.get("height", 0) or 0)
+
+        if not image_data and not image_url:
+            return Response(
+                {"error": "Provide image_data (base64) for Polotno or image_url for Canva."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            cdn_url, public_id = upload_image_to_cloudinary(
+                image_data or image_url,
+                folder="socialmedia/designs",
+            )
+        except Exception as exc:
+            logger.exception("Design Cloudinary upload failed: user=%s", request.user.id)
+            return Response(
+                {"error": f"Image upload failed: {exc}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        design = Design.objects.create(
+            user=request.user,
+            source=source,
+            title=title or f"{source.title()} Design",
+            image_url=cdn_url,
+            cloudinary_public_id=public_id,
+            canva_design_id=canva_design_id,
+            polotno_state=polotno_state if isinstance(polotno_state, dict) else {},
+            width=width,
+            height=height,
+        )
+
+        logger.info("Design saved: user=%s id=%s source=%s", request.user.id, design.id, source)
+
+        return Response({
+            "id": design.id,
+            "image_url": design.image_url,
+            "title": design.title,
+            "source": design.source,
+            "width": design.width,
+            "height": design.height,
+            "created_at": design.created_at.isoformat(),
+        }, status=status.HTTP_201_CREATED)
+
+
+class DesignListView(APIView):
+    """List or delete the authenticated user's saved designs.
+
+    GET  ?source=canva|polotno  — filter by tool (omit for all)
+    DELETE /<pk>/               — permanently remove a design
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        source = request.query_params.get("source", "")
+        qs = Design.objects.filter(user=request.user)
+        if source in {Design.Source.CANVA, Design.Source.POLOTNO}:
+            qs = qs.filter(source=source)
+        data = [
+            {
+                "id": d.id,
+                "title": d.title,
+                "source": d.source,
+                "image_url": d.image_url,
+                "has_polotno_state": bool(d.polotno_state),
+                "canva_design_id": d.canva_design_id,
+                "width": d.width,
+                "height": d.height,
+                "created_at": d.created_at.isoformat(),
+            }
+            for d in qs[:100]
+        ]
+        return Response({"designs": data, "count": len(data)})
+
+    def delete(self, request, pk):
+        try:
+            design = Design.objects.get(pk=pk, user=request.user)
+        except Design.DoesNotExist:
+            return Response({"error": "Design not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if design.cloudinary_public_id:
+            try:
+                import cloudinary.uploader as _cu
+                _cu.destroy(design.cloudinary_public_id)
+            except Exception:
+                pass
+
+        design.delete()
+        return Response({"message": "Design deleted."})
+
+
+class PolotnoStateSaveView(APIView):
+    """Persist the Polotno JSON state so the design can be re-opened and edited.
+
+    PATCH /api/designs/<pk>/state/
+        polotno_state  obj  Full Polotno store JSON
+    """
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        try:
+            design = Design.objects.get(pk=pk, user=request.user, source=Design.Source.POLOTNO)
+        except Design.DoesNotExist:
+            return Response({"error": "Polotno design not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        polotno_state = request.data.get("polotno_state")
+        if not isinstance(polotno_state, dict):
+            return Response(
+                {"error": "polotno_state must be a JSON object."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        design.polotno_state = polotno_state
+        design.save(update_fields=["polotno_state", "updated_at"])
+        return Response({"message": "Design state saved.", "id": design.id})
 

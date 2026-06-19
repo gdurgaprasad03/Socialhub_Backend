@@ -21,15 +21,22 @@ def get_transformed_url(url, transformation="c_pad,ar_1:1,b_auto"):
     return url
 
 
-def upload_image_to_cloudinary(source, filename="image"):
-    
+def upload_image_to_cloudinary(source, filename="image", folder="socialmedia/images"):
+
     try:
         if hasattr(source, "read"):
             # File object (Django uploaded file)
             source.seek(0)
             result = cloudinary.uploader.upload(
                 source,
-                folder="socialmedia/images",
+                folder=folder,
+                resource_type="image",
+            )
+        elif isinstance(source, str) and source.startswith("data:image/"):
+            # Base64 data URI (e.g. from Polotno canvas export or cropped image)
+            result = cloudinary.uploader.upload(
+                source,
+                folder=folder,
                 resource_type="image",
             )
         elif isinstance(source, str) and source.startswith(("http://", "https://")):
@@ -43,7 +50,7 @@ def upload_image_to_cloudinary(source, filename="image"):
             try:
                 result = cloudinary.uploader.upload(
                     tmp_path,
-                    folder="socialmedia/images",
+                    folder=folder,
                     resource_type="image",
                 )
             finally:
@@ -55,7 +62,7 @@ def upload_image_to_cloudinary(source, filename="image"):
                 raise ValueError(f"Local file not found: {source}")
             result = cloudinary.uploader.upload(
                 source,
-                folder="socialmedia/images",
+                folder=folder,
                 resource_type="image",
             )
         else:
@@ -66,7 +73,7 @@ def upload_image_to_cloudinary(source, filename="image"):
             raise ValueError("Cloudinary did not return a secure URL")
 
         logger.info("Cloudinary image upload success: url=%s", public_url)
-        return public_url
+        return public_url, result.get("public_id", "")
 
     except Exception as exc:
         logger.exception("Cloudinary image upload failed: %s", exc)

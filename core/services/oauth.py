@@ -21,6 +21,8 @@ LINKEDIN_DEFAULT_SCOPES = [
     "profile",
     "email",
     "w_member_social",
+    "r_organization_social",
+    "w_organization_social",
 ]
 
 META_DEFAULT_SCOPES = [
@@ -152,13 +154,13 @@ def fetch_linkedin_profile(access_token):
 
 
 def fetch_linkedin_pages(access_token):
-    """Fetch LinkedIn Pages the user administers."""
+    """Fetch LinkedIn Pages the user administers. Returns a clean list of {id, name}."""
     response = requests.get(
         "https://api.linkedin.com/v2/organizationAcls",
         params={
             "q": "roleAssignee",
             "role": "ADMINISTRATOR",
-            "projection": "(elements*(organization~(id,name,localizedName)))",
+            "projection": "(elements*(organization~(id,localizedName)))",
         },
         headers={
             "Authorization": f"Bearer {access_token}",
@@ -169,7 +171,16 @@ def fetch_linkedin_pages(access_token):
     )
     payload = _json_or_raise(response)
     _raise_for_error(response)
-    return payload.get("elements", [])
+    pages = []
+    for element in payload.get("elements", []):
+        org = element.get("organization~", {})
+        org_id = org.get("id")
+        if org_id:
+            pages.append({
+                "id": str(org_id),
+                "name": org.get("localizedName", f"Page {org_id}"),
+            })
+    return pages
 
 
 # ── Meta (Facebook + Instagram) ──────────────────────────────────────────
@@ -610,8 +621,10 @@ def build_social_account_data(platform, token_payload, profile_payload):
         account_id = profile_payload.get("sub")
         if not account_id:
             raise SocialPlatformError("LinkedIn profile is missing the account id.")
+        available_pages = profile_payload.get("available_pages", [])
         return {
             "account_id": account_id,
+            "account_type": "personal",
             "platform_username": profile_payload.get("name", ""),
             "access_token": token_payload["access_token"],
             "refresh_token": token_payload.get("refresh_token", ""),
@@ -621,6 +634,8 @@ def build_social_account_data(platform, token_payload, profile_payload):
                 "email": profile_payload.get("email"),
                 "given_name": profile_payload.get("given_name"),
                 "family_name": profile_payload.get("family_name"),
+                "available_pages": available_pages,
+                "page_count": len(available_pages),
             },
         }
 
@@ -706,6 +721,41 @@ def build_social_account_data(platform, token_payload, profile_payload):
         }
 
     raise SocialPlatformError(f"Unsupported OAuth platform: {platform}")
+
+
+def build_linkedin_page_account_data(token_payload, page_data, admin_profile):
+    """Build SocialAccount data for a LinkedIn Page (organization).
+
+    The access token is the same personal user token — LinkedIn uses the
+    member's token to post *on behalf of* the organization they administer.
+    The account_id is the organization numeric ID; _author_urn() in the service
+    converts it to urn:li:organization:{id} when posting.
+    """
+    expires_at = None
+    expires_in = token_payload.get("expires_in")
+    if expires_in:
+        expires_at = timezone.now() + timedelta(seconds=int(expires_in))
+
+    page_name = page_data.get("name", "")
+    page_id = str(page_data.get("id", ""))
+    if not page_id:
+        raise SocialPlatformError("LinkedIn page data is missing the organization id.")
+
+    return {
+        "account_id": page_id,
+        "account_type": "page",
+        "platform_username": page_name,
+        "account_label": page_name,
+        "access_token": token_payload["access_token"],
+        "refresh_token": token_payload.get("refresh_token", ""),
+        "token_type": token_payload.get("token_type", "Bearer"),
+        "expires_at": expires_at,
+        "metadata": {
+            "page_name": page_name,
+            "admin_person_id": admin_profile.get("sub", ""),
+            "admin_name": admin_profile.get("name", ""),
+        },
+    }
 
 
 def build_instagram_login_account_data(token_payload, profile_payload):
