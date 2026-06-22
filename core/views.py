@@ -561,46 +561,58 @@ class CreatePost(APIView):
             errors = {}
             updated_results = copy.deepcopy(post.platform_results or {})
 
-            if post.status in [Post.Status.PUBLISHED, Post.Status.PARTIAL]:
+            # Attempt platform deletion for any account that has a successful
+            # publish record, regardless of the post's overall status.
+            # This covers PUBLISHED, PARTIAL, and PROCESSING (e.g. LinkedIn
+            # video posts where the video upload already succeeded but the post
+            # status hasn't flipped to PUBLISHED yet).
+            has_published_content = any(
+                isinstance(r, dict) and r.get("success") and not r.get("deleted")
+                for r in (post.platform_results or {}).values()
+            )
+
+            if has_published_content:
                 for account_key, result in (post.platform_results or {}).items():
-                    if result.get("success") and not result.get("deleted"):
-                        post_urn = result.get("post_urn") or result.get("post_id")
-                        if not post_urn:
-                        
-                            errors[account_key] = (
-                                "No platform post ID recorded for this account; "
-                                "cannot delete remotely. Use ?force=true to remove locally."
-                            )
-                            logger.warning(
-                                "Cannot delete remotely — no post_urn/post_id stored: "
-                                "post_id=%s account=%s", pk, account_key
-                            )
-                            continue
-                        try:
-                            account = SocialAccount.objects.get(
-                                id=int(account_key), user=request.user
-                            )
-                            if account.platform == "instagram":
-                                # Instagram Graph API does not support deleting media; skip and mark as deleted locally
-                                if account_key not in updated_results:
-                                    updated_results[account_key] = result.copy()
-                                updated_results[account_key]["deleted"] = True
-                                continue
-
-                            service = get_service(
-                                account.platform, request.user, account=account)
-                            service.account = account
-                            service.delete_post(post_urn)
-
-                            if account_key not in updated_results:
-                                updated_results[account_key] = result.copy()
-                            updated_results[account_key]["deleted"] = True
-                        except Exception as exc:
-                            logger.exception(
-                                "Remote delete failed: post_id=%s account=%s error=%s",
-                                pk, account_key, exc
-                            )
-                            errors[account_key] = str(exc)
+                    if not (result.get("success") and not result.get("deleted")):
+                        continue
+                    post_urn = result.get("post_urn") or result.get("post_id")
+                    if not post_urn:
+                        errors[account_key] = (
+                            "No platform post ID recorded for this account; "
+                            "cannot delete remotely. Use ?force=true to remove locally."
+                        )
+                        logger.warning(
+                            "Cannot delete remotely — no post_urn/post_id stored: "
+                            "post_id=%s account=%s", pk, account_key
+                        )
+                        continue
+                    try:
+                        account = SocialAccount.objects.get(
+                            id=int(account_key), user=request.user
+                        )
+                        service = get_service(
+                            account.platform, request.user, account=account)
+                        service.account = account
+                        service.delete_post(post_urn)
+                        updated_results[account_key]["deleted"] = True
+                        logger.info(
+                            "Platform delete succeeded: post_id=%s account=%s platform=%s",
+                            pk, account_key, account.platform,
+                        )
+                    except SocialAccount.DoesNotExist:
+                        # Account was disconnected after publishing — can't reach platform.
+                        # Allow local delete so the orphaned DB record can be cleaned up.
+                        logger.warning(
+                            "Account no longer exists, skipping remote delete: "
+                            "post_id=%s account=%s", pk, account_key
+                        )
+                        updated_results[account_key]["deleted"] = True
+                    except Exception as exc:
+                        logger.exception(
+                            "Remote delete failed: post_id=%s account=%s error=%s",
+                            pk, account_key, exc
+                        )
+                        errors[account_key] = str(exc)
 
                 post.platform_results = updated_results
                 post.save(update_fields=["platform_results", "updated_at"])
@@ -643,22 +655,15 @@ class DeletePublishedPostView(APIView):
         except Post.DoesNotExist:
             return Response({"error": "Post not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        if post.status not in [Post.Status.PUBLISHED, Post.Status.PARTIAL]:
-            return Response(
-                {"error": "Only published or partially published posts can be deleted."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
         account_key = str(account_id)
-        platform_result = post.platform_results.get(account_key)
+        platform_result = (post.platform_results or {}).get(account_key)
         if not platform_result or not platform_result.get("success"):
             return Response(
                 {"error": f"No successful publish record found for account: {account_id}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        post_urn = platform_result.get(
-            "post_urn") or platform_result.get("post_id")
+        post_urn = platform_result.get("post_urn") or platform_result.get("post_id")
         if not post_urn:
             return Response(
                 {"error": "No post URN stored. Cannot delete remotely."},
@@ -668,23 +673,6 @@ class DeletePublishedPostView(APIView):
         try:
             account = SocialAccount.objects.get(
                 id=int(account_id), user=request.user)
-            if account.platform == "instagram":
-                # Instagram Graph API does not support deleting media; skip and mark as deleted locally
-                updated_results = copy.deepcopy(post.platform_results)
-                updated_results[account_key]["deleted"] = True
-                post.platform_results = updated_results
-                all_deleted = all(
-                    v.get("deleted") for v in updated_results.values() if v.get("success")
-                )
-                if all_deleted:
-                    post.delete()
-                    return Response({"message": "Post deleted from platform and removed locally. (Note: Instagram posts must be deleted manually on the Instagram app)"})
-                post.save(update_fields=["platform_results", "updated_at"])
-                return Response({
-                    "message": "Post marked as deleted for Instagram. (Note: Instagram posts must be deleted manually on the Instagram app)",
-                    "platform_results": updated_results
-                })
-
             service = get_service(
                 account.platform, request.user, account=account)
             service.account = account
