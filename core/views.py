@@ -859,7 +859,7 @@ class SocialConnectStartView(APIView):
             sub = get_or_create_subscription(request.user)
             max_accounts = sub.plan.max_accounts
             if max_accounts != -1:
-                current_count = SocialAccount.objects.filter(user=request.user).count()
+                current_count = SocialAccount.objects.filter(user=request.user, platform=platform).count()
                 if current_count >= max_accounts:
                     return Response(
                         {
@@ -1669,7 +1669,7 @@ class LinkedInPageSelectView(APIView):
                 sub = get_or_create_subscription(request.user)
                 max_accounts = sub.plan.max_accounts
                 if max_accounts != -1:
-                    current_count = SocialAccount.objects.filter(user=request.user).count()
+                    current_count = SocialAccount.objects.filter(user=request.user, platform="linkedin").count()
                     if current_count >= max_accounts:
                         return Response(
                             {

@@ -83,11 +83,7 @@ class LinkedInService(BaseSocialService):
     # ── Image upload ──────────────────────────────────────────────────────
 
     def _author_urn(self):
-        """Return the author/owner URN for LinkedIn REST API calls.
-
-        Personal accounts use urn:li:person:{sub}.
-        LinkedIn Pages (account_type='page') use urn:li:organization:{org_id}.
-        """
+      
         if getattr(self.account, "account_type", "personal") == "page":
             return f"urn:li:organization:{self.account.account_id}"
         return f"urn:li:person:{self.account.account_id}"
