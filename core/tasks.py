@@ -38,7 +38,7 @@ def process_post(self, post_id):
     transitioned = Post.objects.filter(
         id=post_id,
         status__in=[Post.Status.PENDING, Post.Status.SCHEDULED, Post.Status.FAILED],
-    ).update(status=Post.Status.PROCESSING)
+    ).update(status=Post.Status.PROCESSING, updated_at=timezone.now())
 
     if not transitioned:
         logger.info(
@@ -437,10 +437,17 @@ def recover_stuck_posts():
     cutoff = now - timedelta(minutes=5)
 
     # Case 1: stuck PENDING / PROCESSING
+    # IMPORTANT: use updated_at (not created_at) so that a scheduled post
+    # that just transitioned to PROCESSING doesn't match. For scheduled posts,
+    # created_at is always hours/days old, so created_at__lte=cutoff always
+    # matched — causing a second publish task to fire while the first was still
+    # running, resulting in duplicate platform posts and deletion failures.
+    # The PROCESSING transition now explicitly stamps updated_at=now(), so a
+    # freshly-started task is invisible to this query for 5 minutes.
     stuck_pending = Post.objects.filter(
         status__in=[Post.Status.PENDING, Post.Status.PROCESSING],
         platform_results={},
-        created_at__lte=cutoff,
+        updated_at__lte=cutoff,
     )
 
     # Case 2: SCHEDULED posts whose time has already passed (overdue)
