@@ -1,4 +1,5 @@
 import base64
+import copy
 import json
 import logging
 import os
@@ -551,11 +552,14 @@ class CreatePost(APIView):
             except Post.DoesNotExist:
                 return Response({"error": "Post not found"}, status=status.HTTP_404_NOT_FOUND)
 
-            # Check if we should force local delete bypass (default to true so local delete is non-blocking)
-            force = request.query_params.get("force", "true").lower() == "true"
+            # Check if we should force local delete bypass.
+            # Default is false: if the remote platform delete fails the post is
+            # kept locally so the user can retry. Pass ?force=true to remove
+            # locally regardless of remote delete outcome.
+            force = request.query_params.get("force", "false").lower() == "true"
 
             errors = {}
-            updated_results = (post.platform_results or {}).copy()
+            updated_results = copy.deepcopy(post.platform_results or {})
 
             if post.status in [Post.Status.PUBLISHED, Post.Status.PARTIAL]:
                 for account_key, result in (post.platform_results or {}).items():
@@ -666,7 +670,7 @@ class DeletePublishedPostView(APIView):
                 id=int(account_id), user=request.user)
             if account.platform == "instagram":
                 # Instagram Graph API does not support deleting media; skip and mark as deleted locally
-                updated_results = post.platform_results.copy()
+                updated_results = copy.deepcopy(post.platform_results)
                 updated_results[account_key]["deleted"] = True
                 post.platform_results = updated_results
                 all_deleted = all(
@@ -700,7 +704,7 @@ class DeletePublishedPostView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        updated_results = post.platform_results.copy()
+        updated_results = copy.deepcopy(post.platform_results)
         updated_results[account_key]["deleted"] = True
         post.platform_results = updated_results
 
@@ -1502,8 +1506,9 @@ class BulkDeletePostsView(APIView):
 
     def delete(self, request):
         post_ids = request.data.get("post_ids", [])
-        # Check if we should force local delete bypass (default to true so local delete is non-blocking)
-        force = request.query_params.get("force", "true").lower() == "true"
+        # Default false: keep posts locally if remote delete fails so the user can retry.
+        # Pass ?force=true to remove locally regardless of remote outcome.
+        force = request.query_params.get("force", "false").lower() == "true"
         if not isinstance(post_ids, list) or not post_ids:
             return Response(
                 {"error": "post_ids must be a non-empty list of post IDs."},
@@ -1532,7 +1537,7 @@ class BulkDeletePostsView(APIView):
         for post in posts:
             try:
                 post_errors = {}
-                updated_results = (post.platform_results or {}).copy()
+                updated_results = copy.deepcopy(post.platform_results or {})
 
                 if post.status in [Post.Status.PUBLISHED, Post.Status.PARTIAL]:
                     for account_key, result in (post.platform_results or {}).items():
@@ -1951,4 +1956,3 @@ class PolotnoStateSaveView(APIView):
         design.polotno_state = polotno_state
         design.save(update_fields=["polotno_state", "updated_at"])
         return Response({"message": "Design state saved.", "id": design.id})
-

@@ -88,6 +88,11 @@ class BaseSocialService:
             if "not_found" in exc_str or "not found" in exc_str or "404" in exc_str:
                 logger.info("Post already deleted or not found on platform: %s", url)
                 return True
+            # Log clearly before re-raising so the cause is visible in logs
+            logger.error(
+                "Platform delete failed — platform=%s url=%s error=%s",
+                self.platform, url, exc,
+            )
             raise
         return True
 
