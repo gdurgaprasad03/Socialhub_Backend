@@ -558,6 +558,26 @@ class CreatePost(APIView):
             # locally regardless of remote delete outcome.
             force = request.query_params.get("force", "false").lower() == "true"
 
+            # Block deletion while the Celery task is actively publishing and
+            # has not yet written any results. At this moment the task has
+            # already started making platform API calls; if we delete the local
+            # record now the publish will finish and leave orphaned content on
+            # the platform with no way to track or remove it. The PROCESSING
+            # window is typically a few seconds for image posts.
+            if post.status == Post.Status.PROCESSING and not any(
+                isinstance(r, dict) and r.get("success")
+                for r in (post.platform_results or {}).values()
+            ):
+                return Response(
+                    {
+                        "error": (
+                            "This post is currently being published. "
+                            "Please wait a few seconds for publishing to finish, then try again."
+                        )
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
             errors = {}
             updated_results = copy.deepcopy(post.platform_results or {})
 
@@ -628,9 +648,10 @@ class CreatePost(APIView):
                     status=status.HTTP_502_BAD_GATEWAY
                 )
 
-            # Revoke pending Celery task if any
+            # Revoke pending Celery task if any (covers SCHEDULED, PENDING, and
+            # the narrow PROCESSING window where terminate=False prevents retries)
             if post.celery_task_id and post.status in [
-                Post.Status.SCHEDULED, Post.Status.PENDING
+                Post.Status.SCHEDULED, Post.Status.PENDING, Post.Status.PROCESSING
             ]:
                 try:
                     from celery import current_app

@@ -368,11 +368,7 @@ class LinkedInService(BaseSocialService):
     def delete_post(self, post_urn):
         encoded_urn = requests.utils.quote(post_urn, safe="")
 
-        # urn:li:ugcPost: were created via the deprecated /v2/ugcPosts API —
-        # they must be deleted via that same endpoint.
-        # All other URNs (urn:li:share: and any future formats) were created via
-        # /rest/posts and MUST be deleted there. The old /v2/shares/ endpoint
-        # returns 403/404 for posts created via the REST v3 API.
+    
         if post_urn.startswith("urn:li:ugcPost:"):
             url = f"https://api.linkedin.com/v2/ugcPosts/{encoded_urn}"
             headers = self._auth_headers(use_rest_v3=False)

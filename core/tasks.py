@@ -105,6 +105,14 @@ def _get_post_for_account(post, account):
 
 
 def _process_video_post(post, target_accounts):
+    # The post transitioned to PROCESSING just before this call. If the user
+    # deleted it in that narrow window, bail out now before hitting any platforms.
+    if not Post.objects.filter(id=post.id).exists():
+        logger.warning(
+            "Post deleted while transitioning to PROCESSING, aborting: post_id=%s", post.id
+        )
+        return {"post_id": post.id, "status": "aborted", "results": {}}
+
     results = {}
     upload_count = 0
 
@@ -215,6 +223,14 @@ def _process_video_post(post, target_accounts):
 
 
 def _process_image_post(post, target_accounts):
+    # The post transitioned to PROCESSING just before this call. If the user
+    # deleted it in that narrow window, bail out now before hitting any platforms.
+    if not Post.objects.filter(id=post.id).exists():
+        logger.warning(
+            "Post deleted while transitioning to PROCESSING, aborting: post_id=%s", post.id
+        )
+        return {"post_id": post.id, "status": "aborted", "results": {}}
+
     results = {}
     success_count = 0
 
