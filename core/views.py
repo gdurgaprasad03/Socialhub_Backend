@@ -759,11 +759,13 @@ class SchedulingView(APIView):
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     def delete(self, request, pk=None):
-        """Delete one or all recurring posting slots."""
+        pk = self.kwargs.get('pk')
         if not pk:
             PostingSchedule.objects.filter(user=request.user).delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
-        PostingSchedule.objects.filter(user=request.user, pk=pk).delete()
+        deleted, _ = PostingSchedule.objects.filter(user=request.user, pk=pk).delete()
+        if not deleted:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -1625,17 +1627,7 @@ class BulkDeletePostsView(APIView):
 # ──────────────────────────────────────────────
 
 class LinkedInPageSelectView(APIView):
-    """Connect a LinkedIn Page (organization) the user administers.
-
-    GET  — list pages available across all connected LinkedIn personal accounts.
-    POST — create/update a SocialAccount for the chosen page using the personal
-           account's token (LinkedIn uses the member token to post as org).
-
-    Request body (POST):
-        social_account_id: int   — the personal LinkedIn SocialAccount.id
-        page_id:           str   — the organization numeric ID
-        page_name:         str   — display name for the page
-    """
+ 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -1820,20 +1812,7 @@ class YouTubeChannelSelectView(APIView):
 # ──────────────────────────────────────────────
 
 class DesignExportView(APIView):
-    """Receive a finished design image from Polotno (base64) or Canva (URL),
-    upload it to Cloudinary, persist a Design record, and return the CDN URL
-    ready to attach to a post.
 
-    POST body:
-        source          str   "polotno" | "canva"
-        image_data      str   base64 data-URI  (Polotno)
-        image_url       str   Canva export URL (Canva)
-        canva_design_id str   Canva design ID  (optional, Canva)
-        polotno_state   obj   Full Polotno JSON state for re-editing (optional)
-        title           str   Human label
-        width           int   Canvas width in px
-        height          int   Canvas height in px
-    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -1896,11 +1875,7 @@ class DesignExportView(APIView):
 
 
 class DesignListView(APIView):
-    """List or delete the authenticated user's saved designs.
-
-    GET  ?source=canva|polotno  — filter by tool (omit for all)
-    DELETE /<pk>/               — permanently remove a design
-    """
+    
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -1942,11 +1917,8 @@ class DesignListView(APIView):
 
 
 class PolotnoStateSaveView(APIView):
-    """Persist the Polotno JSON state so the design can be re-opened and edited.
+    
 
-    PATCH /api/designs/<pk>/state/
-        polotno_state  obj  Full Polotno store JSON
-    """
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, pk):
