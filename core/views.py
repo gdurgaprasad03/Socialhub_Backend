@@ -551,19 +551,7 @@ class CreatePost(APIView):
                 post = Post.objects.get(pk=pk, user=request.user)
             except Post.DoesNotExist:
                 return Response({"error": "Post not found"}, status=status.HTTP_404_NOT_FOUND)
-
-            # Check if we should force local delete bypass.
-            # Default is false: if the remote platform delete fails the post is
-            # kept locally so the user can retry. Pass ?force=true to remove
-            # locally regardless of remote delete outcome.
             force = request.query_params.get("force", "false").lower() == "true"
-
-            # Block deletion while the Celery task is actively publishing and
-            # has not yet written any results. At this moment the task has
-            # already started making platform API calls; if we delete the local
-            # record now the publish will finish and leave orphaned content on
-            # the platform with no way to track or remove it. The PROCESSING
-            # window is typically a few seconds for image posts.
             if post.status == Post.Status.PROCESSING and not any(
                 isinstance(r, dict) and r.get("success")
                 for r in (post.platform_results or {}).values()
@@ -580,12 +568,6 @@ class CreatePost(APIView):
 
             errors = {}
             updated_results = copy.deepcopy(post.platform_results or {})
-
-            # Attempt platform deletion for any account that has a successful
-            # publish record, regardless of the post's overall status.
-            # This covers PUBLISHED, PARTIAL, and PROCESSING (e.g. LinkedIn
-            # video posts where the video upload already succeeded but the post
-            # status hasn't flipped to PUBLISHED yet).
             has_published_content = any(
                 isinstance(r, dict) and r.get("success") and not r.get("deleted")
                 for r in (post.platform_results or {}).values()
@@ -620,8 +602,7 @@ class CreatePost(APIView):
                             pk, account_key, account.platform,
                         )
                     except SocialAccount.DoesNotExist:
-                        # Account was disconnected after publishing — can't reach platform.
-                        # Allow local delete so the orphaned DB record can be cleaned up.
+                       
                         logger.warning(
                             "Account no longer exists, skipping remote delete: "
                             "post_id=%s account=%s", pk, account_key
@@ -637,7 +618,6 @@ class CreatePost(APIView):
                 post.platform_results = updated_results
                 post.save(update_fields=["platform_results", "updated_at"])
 
-            # If there are any failed remote deletes, do NOT delete locally, unless force=true is passed
             if errors and not force:
                 return Response(
                     {
@@ -648,8 +628,7 @@ class CreatePost(APIView):
                     status=status.HTTP_502_BAD_GATEWAY
                 )
 
-            # Revoke pending Celery task if any (covers SCHEDULED, PENDING, and
-            # the narrow PROCESSING window where terminate=False prevents retries)
+      
             if post.celery_task_id and post.status in [
                 Post.Status.SCHEDULED, Post.Status.PENDING, Post.Status.PROCESSING
             ]:
@@ -739,7 +718,7 @@ class SchedulingView(APIView):
         schedules = PostingSchedule.objects.filter(user=request.user)
         slots_data = PostingScheduleSerializer(schedules, many=True).data
 
-        # 2. Get actual upcoming and past scheduled posts
+     
         posts = Post.objects.filter(
             user=request.user,
             scheduled_time__isnull=False,
@@ -853,7 +832,6 @@ class SocialConnectStartView(APIView):
         if platform not in {choice[0] for choice in SocialAccount.Platform.choices}:
             return Response({"error": "Unsupported platform"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ── Enforce max_accounts plan limit ───────────────────────────────
         try:
             from billing.views import get_or_create_subscription
             sub = get_or_create_subscription(request.user)
@@ -1037,7 +1015,7 @@ class SocialConnectCallbackView(APIView):
 
         try:
             if platform == SocialAccount.Platform.INSTAGRAM and login_method == "instagram":
-                # Direct Instagram Login — no Facebook Page involved.
+                
                 token_payload = exchange_instagram_login_code(
                     code, callback_uri)
                 profile_payload = fetch_instagram_login_profile(
@@ -1065,7 +1043,7 @@ class SocialConnectCallbackView(APIView):
                     if not pages:
                         raise ValueError(
                             "No Facebook Pages found for this account.")
-                    # Connect first page — user can connect more by re-authorizing
+             
                     profile_payload = pages[0]
                 else:
                     profile_payload = next(
@@ -1111,7 +1089,7 @@ class SocialConnectCallbackView(APIView):
             )
             account_data["account_label"] = account_label
 
-            # Allow multiple accounts — update if same account_id exists, else create
+            
             account = SocialAccount.objects.filter(
                 user=state_user,
                 platform=platform,
@@ -1263,7 +1241,7 @@ class SocialAccountHealthView(APIView):
                 else:
                     token_status = "active"
 
-                # Find last successful post for this account
+                
                 last_post_info = Post.objects.filter(
                     user=request.user,
                     status__in=[Post.Status.PUBLISHED, Post.Status.PARTIAL],
@@ -1459,7 +1437,7 @@ class PostAnalyticsView(APIView):
             }
 
         elif platform == "twitter":
-            # Twitter API v2 — requires OAuth1 user context
+            
             from requests_oauthlib import OAuth1
             from django.conf import settings as dj_settings
             oauth = OAuth1(
@@ -1526,7 +1504,6 @@ class BulkDeletePostsView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Validate all are integers
         try:
             post_ids = [int(pid) for pid in post_ids]
         except (ValueError, TypeError):
@@ -1659,7 +1636,6 @@ class LinkedInPageSelectView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Enforce plan max_accounts limit (skip if page already exists for this user)
         page_exists = SocialAccount.objects.filter(
             user=request.user, platform="linkedin", account_id=page_id
         ).exists()
@@ -1823,8 +1799,8 @@ class DesignExportView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        image_data = request.data.get("image_data", "")   # base64 from Polotno
-        image_url = request.data.get("image_url", "")     # export URL from Canva
+        image_data = request.data.get("image_data", "")   
+        image_url = request.data.get("image_url", "")     
         title = str(request.data.get("title", "")).strip()
         canva_design_id = str(request.data.get("canva_design_id", "")).strip()
         polotno_state = request.data.get("polotno_state", {})
@@ -1875,7 +1851,6 @@ class DesignExportView(APIView):
 
 
 class DesignListView(APIView):
-    
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -1917,8 +1892,6 @@ class DesignListView(APIView):
 
 
 class PolotnoStateSaveView(APIView):
-    
-
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, pk):

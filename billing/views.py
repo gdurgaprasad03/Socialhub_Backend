@@ -168,8 +168,12 @@ class CreateSubscriptionView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # Allow upgrade from any status (TRIALING, CANCELLED, EXPIRED, PAST_DUE)
+        # as long as it's not a duplicate ACTIVE subscription for the same plan.
         is_plan_change = bool(
-            current.razorpay_subscription_id and not current.plan.is_free
+            current.razorpay_subscription_id
+            and not current.plan.is_free
+            and current.status == UserSubscription.Status.ACTIVE
         )
         if is_plan_change:
             self._cancel_existing_razorpay_subscription(current)
@@ -250,6 +254,18 @@ class CreateSubscriptionView(APIView):
     def _downgrade_to_free(self, user):
         try:
             subscription = get_or_create_subscription(user)
+
+            # Already on free plan and not an active paid subscription — nothing to do
+            if subscription.plan.is_free and subscription.status not in [
+                UserSubscription.Status.ACTIVE,
+                UserSubscription.Status.TRIALING,
+            ]:
+                free_plan = subscription.plan
+                return Response({
+                    "message": "You are already on the Free plan.",
+                    "plan": PlanSerializer(free_plan).data,
+                })
+
             if subscription.razorpay_subscription_id:
                 try:
                     client = get_razorpay_client()
@@ -268,7 +284,7 @@ class CreateSubscriptionView(APIView):
             subscription.save()
 
             return Response({
-                "message": "Downgraded to Free plan successfully.",
+                "message": "Downgraded to Free plan. You can upgrade again at any time.",
                 "plan": PlanSerializer(free_plan).data,
             })
         except Exception as exc:
@@ -385,7 +401,18 @@ class CancelSubscriptionView(APIView):
         try:
             subscription = get_or_create_subscription(request.user)
 
-            if subscription.plan.is_free:
+            # Block only if already cancelled or expired — not free trial users
+            if subscription.status in [
+                UserSubscription.Status.CANCELLED,
+                UserSubscription.Status.EXPIRED,
+            ]:
+                return Response(
+                    {"error": "Your subscription is already cancelled."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Block if on free plan and NOT trialing (i.e., a plain free account, not a trial)
+            if subscription.plan.is_free and subscription.status != UserSubscription.Status.TRIALING:
                 return Response(
                     {"error": "You are already on the Free plan."},
                     status=status.HTTP_400_BAD_REQUEST
@@ -401,6 +428,14 @@ class CancelSubscriptionView(APIView):
                 except Exception as exc:
                     logger.warning("Razorpay cancel failed: %s", exc)
 
+            # Downgrade to free plan on cancellation and mark cancelled
+            try:
+                free_plan = Plan.objects.get(slug="free", is_active=True)
+            except Plan.DoesNotExist:
+                free_plan = subscription.plan  # fallback: keep current plan
+
+            subscription.plan = free_plan
+            subscription.razorpay_subscription_id = ""
             subscription.cancelled_at = timezone.now()
             subscription.status = UserSubscription.Status.CANCELLED
             subscription.save()
@@ -412,7 +447,7 @@ class CancelSubscriptionView(APIView):
             )
 
             return Response({
-                "message": "Subscription cancelled. You'll retain access until the end of your billing period.",
+                "message": "Subscription cancelled. You can upgrade to a paid plan at any time.",
                 "current_period_end": subscription.current_period_end,
             })
         except Exception as exc:
