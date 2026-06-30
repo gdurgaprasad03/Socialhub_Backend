@@ -87,7 +87,12 @@ class UserSubscription(models.Model):
 
     @property
     def is_active(self):
-        return self.status == self.Status.ACTIVE
+        if self.status != self.Status.ACTIVE:
+            return False
+        # Treat as inactive if the billing period has already ended
+        if self.current_period_end and self.current_period_end < timezone.now():
+            return False
+        return True
 
     @property
     def is_expired(self):

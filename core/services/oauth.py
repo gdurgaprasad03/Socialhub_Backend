@@ -77,6 +77,16 @@ YOUTUBE_DEFAULT_SCOPES = [
     "profile",
 ]
 
+THREADS_AUTH_URL = "https://threads.net/oauth/authorize"
+THREADS_TOKEN_URL = "https://graph.threads.net/oauth/access_token"
+THREADS_GRAPH_BASE = "https://graph.threads.net"
+THREADS_API_VERSION = "v1.0"
+
+THREADS_DEFAULT_SCOPES = [
+    "threads_basic",
+    "threads_content_publish",
+]
+
 
 def generate_state():
     return secrets.token_urlsafe(32)
@@ -609,6 +619,114 @@ def fetch_youtube_profile(access_token):
     return payload
 
 
+# ── Threads OAuth 2.0 ────────────────────────────────────────────────────
+
+def build_threads_auth_url(redirect_uri, state):
+    """Build Threads OAuth 2.0 authorization URL."""
+    if not getattr(settings, "THREADS_APP_ID", ""):
+        raise OAuthConfigurationError("THREADS_APP_ID is not configured")
+
+    query = urlencode(
+        {
+            "client_id": settings.THREADS_APP_ID,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": ",".join(THREADS_DEFAULT_SCOPES),
+            "state": state,
+        }
+    )
+    return f"{THREADS_AUTH_URL}?{query}"
+
+
+def exchange_threads_code(code, redirect_uri):
+    """Exchange the auth code for a long-lived Threads user access token.
+
+    Step 1: code -> short-lived token via graph.threads.net.
+    Step 2: short-lived -> long-lived (60 day) token.
+    """
+    if not getattr(settings, "THREADS_APP_ID", "") or not getattr(settings, "THREADS_APP_SECRET", ""):
+        raise OAuthConfigurationError("Threads OAuth credentials are not fully configured")
+
+    short_lived_response = requests.post(
+        THREADS_TOKEN_URL,
+        data={
+            "client_id": settings.THREADS_APP_ID,
+            "client_secret": settings.THREADS_APP_SECRET,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri,
+            "code": code,
+        },
+        headers={"Accept": "application/json"},
+        timeout=settings.SOCIAL_REQUEST_TIMEOUT,
+    )
+    short_lived_payload = _json_or_raise(short_lived_response)
+    _raise_for_error(short_lived_response)
+
+    short_lived_token = short_lived_payload.get("access_token")
+    if not short_lived_token:
+        raise SocialPlatformError("Threads token response did not include an access token.")
+
+    long_lived_response = requests.get(
+        f"{THREADS_GRAPH_BASE}/access_token",
+        params={
+            "grant_type": "th_exchange_token",
+            "client_secret": settings.THREADS_APP_SECRET,
+            "access_token": short_lived_token,
+        },
+        headers={"Accept": "application/json"},
+        timeout=settings.SOCIAL_REQUEST_TIMEOUT,
+    )
+    long_lived_payload = _json_or_raise(long_lived_response)
+    _raise_for_error(long_lived_response)
+
+    access_token = long_lived_payload.get("access_token")
+    if not access_token:
+        raise SocialPlatformError("Threads long-lived token response did not include an access token.")
+
+    return {
+        "access_token": access_token,
+        "token_type": long_lived_payload.get("token_type", "Bearer"),
+        "expires_in": long_lived_payload.get("expires_in"),
+        "user_id": short_lived_payload.get("user_id"),
+    }
+
+
+def fetch_threads_profile(access_token):
+    """Fetch the Threads user profile."""
+    response = requests.get(
+        f"{THREADS_GRAPH_BASE}/{THREADS_API_VERSION}/me",
+        params={
+            "fields": "id,username,name,threads_profile_picture_url,threads_biography",
+            "access_token": access_token,
+        },
+        headers={"Accept": "application/json"},
+        timeout=settings.SOCIAL_REQUEST_TIMEOUT,
+    )
+    payload = _json_or_raise(response)
+    _raise_for_error(response)
+    if not payload.get("id"):
+        raise SocialPlatformError("Threads profile response did not include the user id.")
+    return payload
+
+
+def refresh_threads_token(access_token):
+    """Refresh a long-lived Threads access token (refreshable within 60-day window)."""
+    response = requests.get(
+        f"{THREADS_GRAPH_BASE}/refresh_access_token",
+        params={
+            "grant_type": "th_refresh_token",
+            "access_token": access_token,
+        },
+        headers={"Accept": "application/json"},
+        timeout=settings.SOCIAL_REQUEST_TIMEOUT,
+    )
+    payload = _json_or_raise(response)
+    _raise_for_error(response)
+    if "access_token" not in payload:
+        raise SocialPlatformError("Threads refresh response did not include an access token.")
+    return payload
+
+
 # ── Social account data builder ───────────────────────────────────────────
 
 def build_social_account_data(platform, token_payload, profile_payload):
@@ -717,6 +835,25 @@ def build_social_account_data(platform, token_payload, profile_payload):
                 "google_sub": profile_payload.get("sub"),
                 "available_channels": available_channels,
                 "channel_count": len(available_channels),
+            },
+        }
+
+    if platform == "threads":
+        account_id = profile_payload.get("id") or token_payload.get("user_id")
+        if not account_id:
+            raise SocialPlatformError("Threads profile is missing the user id.")
+        return {
+            "account_id": str(account_id),
+            "platform_username": profile_payload.get("username", ""),
+            "access_token": token_payload["access_token"],
+            "refresh_token": "",
+            "token_type": token_payload.get("token_type", "Bearer"),
+            "expires_at": expires_at,
+            "metadata": {
+                "name": profile_payload.get("name"),
+                "username": profile_payload.get("username"),
+                "biography": profile_payload.get("threads_biography"),
+                "profile_picture_url": profile_payload.get("threads_profile_picture_url"),
             },
         }
 

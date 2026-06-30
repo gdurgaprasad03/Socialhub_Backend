@@ -10,6 +10,7 @@ class SocialAccount(models.Model):
         INSTAGRAM = "instagram", "Instagram"
         TWITTER = "twitter", "Twitter"
         YOUTUBE = "youtube", "YouTube"
+        THREADS = "threads", "Threads"
 
     class AccountType(models.TextChoices):
         PERSONAL = "personal", "Personal"
@@ -74,6 +75,7 @@ class OAuthState(models.Model):
         INSTAGRAM = "instagram", "Instagram"
         TWITTER = "twitter", "Twitter"
         YOUTUBE = "youtube", "YouTube"
+        THREADS = "threads", "Threads"
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="oauth_states")

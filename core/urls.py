@@ -20,6 +20,8 @@ from .views import (
     DesignExportView,
     DesignListView,
     PolotnoStateSaveView,
+    ThreadsDeauthorizeView,
+    ThreadsDataDeletionView,
 )
 from .services.platform_crud_views import (
     GetPlatformPostView,
@@ -84,4 +86,8 @@ urlpatterns = [
     path("designs/", DesignListView.as_view(), name="design-list"),
     path("designs/<int:pk>/", DesignListView.as_view(), name="design-detail"),
     path("designs/<int:pk>/state/", PolotnoStateSaveView.as_view(), name="design-state"),
+
+    # ── Threads Meta Callbacks ────────────────────────────────────────────
+    path("threads/deauthorize/", ThreadsDeauthorizeView.as_view(), name="threads-deauthorize"),
+    path("threads/data-deletion/", ThreadsDataDeletionView.as_view(), name="threads-data-deletion"),
 ]

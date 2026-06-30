@@ -1,6 +1,7 @@
 from .facebook_service import FacebookService
 from .instagram_service import InstagramService
 from .linkedin_service import LinkedInService
+from .threads_service import ThreadsService
 from .twitter_service import TwitterService
 from .youtube_service import YouTubeService
 
@@ -9,6 +10,7 @@ SERVICE_MAP = {
     "linkedin": LinkedInService,
     "facebook": FacebookService,
     "instagram": InstagramService,
+    "threads": ThreadsService,
     "twitter": TwitterService,
     "youtube": YouTubeService,
 }

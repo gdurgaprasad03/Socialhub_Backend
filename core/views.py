@@ -29,6 +29,7 @@ from .services.oauth import (
     build_linkedin_auth_url,
     build_meta_auth_url,
     build_instagram_login_auth_url,
+    build_threads_auth_url,
     build_twitter_auth_url,
     build_twitter_oauth1_auth_url,
     build_youtube_auth_url,
@@ -38,6 +39,7 @@ from .services.oauth import (
     exchange_linkedin_code,
     exchange_meta_code,
     exchange_instagram_login_code,
+    exchange_threads_code,
     exchange_twitter_code,
     exchange_twitter_oauth1_code,
     exchange_youtube_code,
@@ -45,6 +47,7 @@ from .services.oauth import (
     fetch_linkedin_pages,
     fetch_meta_accounts,
     fetch_instagram_login_profile,
+    fetch_threads_profile,
     fetch_twitter_profile,
     fetch_twitter_request_token,
     fetch_youtube_profile,
@@ -264,13 +267,7 @@ class CreatePost(APIView):
 
                 
                 now = timezone.now()
-                is_paid_active = (
-                    sub.status == UserSubscription.Status.ACTIVE
-                    and not sub.plan.is_free
-                )
-                if (not is_paid_active
-                        and sub.current_period_end
-                        and sub.current_period_end < now):
+                if sub.current_period_end and sub.current_period_end < now:
                     return Response(
                         {"error": "Your subscription or free trial has expired. Please upgrade to continue posting."},
                         status=status.HTTP_403_FORBIDDEN
@@ -884,6 +881,11 @@ class SocialConnectStartView(APIView):
                     reverse("social-connect-callback",
                             kwargs={"platform": platform})
                 )
+            elif platform == SocialAccount.Platform.THREADS:
+                callback_url = getattr(settings, "THREADS_REDIRECT_URI", "") or request.build_absolute_uri(
+                    reverse("social-connect-callback",
+                            kwargs={"platform": platform})
+                )
             else:
                 callback_url = request.build_absolute_uri(
                     reverse("social-connect-callback",
@@ -911,6 +913,9 @@ class SocialConnectStartView(APIView):
             elif platform == SocialAccount.Platform.YOUTUBE:
                 auth_url = build_youtube_auth_url(callback_url, state_value)
                 note = "Connect your YouTube channel to upload videos. If you have multiple channels, you can select the correct one after connecting."
+            elif platform == SocialAccount.Platform.THREADS:
+                auth_url = build_threads_auth_url(callback_url, state_value)
+                note = "Connect your Threads account to publish text, image, video, and carousel posts."
             else:
                 auth_url = build_meta_auth_url(callback_url, state_value)
                 note = (
@@ -1072,6 +1077,10 @@ class SocialConnectCallbackView(APIView):
                 token_payload = exchange_youtube_code(code, callback_uri)
                 profile_payload = fetch_youtube_profile(
                     token_payload["access_token"])
+
+            elif platform == SocialAccount.Platform.THREADS:
+                token_payload = exchange_threads_code(code, callback_uri)
+                profile_payload = fetch_threads_profile(token_payload["access_token"])
 
             else:
                 raise ValueError("Unsupported platform.")
@@ -1910,3 +1919,122 @@ class PolotnoStateSaveView(APIView):
         design.polotno_state = polotno_state
         design.save(update_fields=["polotno_state", "updated_at"])
         return Response({"message": "Design state saved.", "id": design.id})
+
+
+# ──────────────────────────────────────────────
+# THREADS DEAUTHORIZE & DATA DELETION CALLBACKS
+# ──────────────────────────────────────────────
+
+def _parse_threads_signed_request(signed_request, app_secret):
+    """Parse and verify a Meta signed_request payload.
+
+    Returns the decoded payload dict, or raises ValueError on bad signature.
+    """
+    import base64
+    import hashlib
+    import hmac
+    import json
+
+    try:
+        encoded_sig, payload = signed_request.split(".", 1)
+    except ValueError:
+        raise ValueError("Invalid signed_request format.")
+
+    def _b64_decode(s):
+        s += "=" * (-len(s) % 4)
+        return base64.urlsafe_b64decode(s)
+
+    sig = _b64_decode(encoded_sig)
+    data = json.loads(_b64_decode(payload))
+
+    if data.get("algorithm", "").upper() != "HMAC-SHA256":
+        raise ValueError("Unsupported signed_request algorithm.")
+
+    expected = hmac.new(
+        app_secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256
+    ).digest()
+    if not hmac.compare_digest(expected, sig):
+        raise ValueError("Signed request signature mismatch.")
+
+    return data
+
+
+class ThreadsDeauthorizeView(APIView):
+    """Called by Meta when a user removes your Threads app from their settings.
+
+    Meta docs: https://developers.facebook.com/docs/threads/reference/deauthorize-callback-url
+    Set this URL in: Threads App → Use cases → Threads API → Settings → Deauthorize Callback URL
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        signed_request = request.data.get("signed_request") or request.POST.get("signed_request")
+        if not signed_request:
+            return Response({"error": "Missing signed_request"}, status=status.HTTP_400_BAD_REQUEST)
+
+        app_secret = getattr(settings, "THREADS_APP_SECRET", "")
+        if not app_secret:
+            logger.error("ThreadsDeauthorize: THREADS_APP_SECRET not configured")
+            return Response({"error": "Server configuration error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        try:
+            data = _parse_threads_signed_request(signed_request, app_secret)
+        except ValueError as exc:
+            logger.warning("ThreadsDeauthorize: invalid signed_request — %s", exc)
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        user_id = str(data.get("user_id", ""))
+        if not user_id:
+            return Response({"error": "Missing user_id in payload"}, status=status.HTTP_400_BAD_REQUEST)
+
+        deleted, _ = SocialAccount.objects.filter(
+            platform="threads", account_id=user_id
+        ).delete()
+        logger.info("ThreadsDeauthorize: deleted %d account(s) for threads user_id=%s", deleted, user_id)
+        return Response({"success": True})
+
+
+class ThreadsDataDeletionView(APIView):
+    """Called by Meta when a user requests deletion of their data.
+
+    Must return a JSON body with a confirmation_code and status_url so Meta
+    can show the user a link to verify deletion.
+
+    Meta docs: https://developers.facebook.com/docs/threads/reference/data-deletion-request-url
+    Set this URL in: Threads App → Use cases → Threads API → Settings → Data Deletion Request URL
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        signed_request = request.data.get("signed_request") or request.POST.get("signed_request")
+        if not signed_request:
+            return Response({"error": "Missing signed_request"}, status=status.HTTP_400_BAD_REQUEST)
+
+        app_secret = getattr(settings, "THREADS_APP_SECRET", "")
+        if not app_secret:
+            logger.error("ThreadsDataDeletion: THREADS_APP_SECRET not configured")
+            return Response({"error": "Server configuration error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        try:
+            data = _parse_threads_signed_request(signed_request, app_secret)
+        except ValueError as exc:
+            logger.warning("ThreadsDataDeletion: invalid signed_request — %s", exc)
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        user_id = str(data.get("user_id", ""))
+        if not user_id:
+            return Response({"error": "Missing user_id in payload"}, status=status.HTTP_400_BAD_REQUEST)
+
+        import hashlib
+        confirmation_code = hashlib.sha256(f"threads-{user_id}".encode()).hexdigest()[:16]
+
+        SocialAccount.objects.filter(platform="threads", account_id=user_id).delete()
+        logger.info("ThreadsDataDeletion: removed data for threads user_id=%s code=%s", user_id, confirmation_code)
+
+        site_url = getattr(settings, "SITE_URL", "").rstrip("/")
+        status_url = f"{site_url}/api/threads/deletion-status/?code={confirmation_code}"
+
+        return Response({
+            "url": status_url,
+            "confirmation_code": confirmation_code,
+        })
